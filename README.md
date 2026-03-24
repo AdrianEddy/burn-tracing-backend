@@ -102,6 +102,12 @@ let mut span = marker("inference").span();
 span.add_tensor::<B>(&output.clone().into_primitive().tensor());
 span.set_debug("batch complete");
 drop(span);
+
+// Always-on tensor capture (works without `trace-data` feature)
+// Second arg: Some(n) = first n values, None = all values
+marker("weights")
+    .tensor_with_data::<B>(&w.clone().into_primitive().tensor(), Some(128))
+    .emit();
 ```
 
 ### Configuring Data Capture
