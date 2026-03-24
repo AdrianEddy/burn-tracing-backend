@@ -1,0 +1,24 @@
+[package]
+name = "burn-tracing-backend"
+version = "0.1.0"
+edition = "2024"
+description = "Backend decorator for Burn that traces tensor operations and generates HTML visualizations with timing, sync points, and fusion block detection."
+
+[features]
+default = []
+fusion = ["burn-fusion", "burn-cubecl-fusion", "burn-cubecl", "burn-ir"]
+trace-caller = []
+trace-data = []
+
+[dependencies]
+burn         = { git = "https://github.com/tracel-ai/burn.git", rev = "699fb9e", default-features = false, features = ["wgpu", "std"] }
+burn-backend = { git = "https://github.com/tracel-ai/burn.git", rev = "699fb9e", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+# Optional fusion-level profiling deps
+burn-ir            = { git = "https://github.com/tracel-ai/burn.git", rev = "699fb9e", package = "burn-ir", default-features = false, optional = true }
+burn-fusion        = { git = "https://github.com/tracel-ai/burn.git", rev = "699fb9e", package = "burn-fusion", optional = true }
+burn-cubecl-fusion = { git = "https://github.com/tracel-ai/burn.git", rev = "699fb9e", package = "burn-cubecl-fusion", optional = true }
+burn-cubecl        = { git = "https://github.com/tracel-ai/burn.git", rev = "699fb9e", package = "burn-cubecl", default-features = false, features = ["fusion"], optional = true }

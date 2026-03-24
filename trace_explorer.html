@@ -1,0 +1,2191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Burn Visualiser - Trace Explorer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg-primary: #1c1c1c;
+  --bg-secondary: #242424;
+  --bg-tertiary: #1e1e1e;
+  --bg-canvas: #141414;
+  --border: #333;
+  --accent: #e94560;
+  --text-primary: #ddd;
+  --text-secondary: #999;
+  --text-muted: #666;
+  --sidebar-width: 240px;
+  --inspector-width: 320px;
+}
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg-primary); color: var(--text-primary); height: 100vh; overflow: hidden; display: flex; }
+
+/* ── Main layout ── */
+.app-layout { display: flex; height: 100vh; width: 100%; overflow: hidden; }
+
+/* ── Left sidebar ── */
+.sidebar { width: var(--sidebar-width); background: var(--bg-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+.sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.sidebar-brand .logo { font-size: 18px; }
+.sidebar-brand h1 { font-size: 15px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+.sidebar-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.sidebar-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px; font-weight: 600; }
+.stat-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; }
+.stat-row .stat-label { color: var(--text-secondary); }
+.stat-row .stat-value { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.legend-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12px; color: var(--text-secondary); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.legend-label { white-space: nowrap; }
+
+/* Filters */
+.filter-group-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-top: 8px; margin-bottom: 4px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.filter-group-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.filter-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 11px; color: var(--text-secondary); cursor: pointer; user-select: none; }
+.filter-item:hover { color: var(--text-primary); }
+.filter-item.hidden { color: var(--text-muted); text-decoration: line-through; opacity: 0.5; }
+.filter-item .filter-check { width: 14px; height: 14px; border: 1px solid var(--border); border-radius: 3px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 10px; background: var(--bg-primary); }
+.filter-item:not(.hidden) .filter-check { background: var(--accent); border-color: var(--accent); color: white; }
+.filter-item .filter-count { margin-left: auto; font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.filter-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.filter-actions button { background: var(--bg-primary); color: var(--text-muted); border: 1px solid var(--border); padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 10px; }
+.filter-actions button:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+/* ── Center area (timeline + memory + table) ── */
+.center-area { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+
+/* Timeline wrapper: header (fixed) + scroll (fills remaining space) */
+.timeline-area { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
+/* Timeline header */
+.timeline-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 16px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.timeline-header h2 { font-size: 14px; font-weight: 600; }
+.toolbar { display: flex; align-items: center; gap: 8px; }
+.toolbar button { background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: all 0.15s; }
+.toolbar button:hover { background: var(--accent); color: white; border-color: var(--accent); }
+.toolbar .zoom-label { font-size: 11px; color: var(--text-muted); min-width: 36px; text-align: center; }
+.toolbar .icon-btn { padding: 3px 6px; font-size: 14px; }
+.toolbar .separator { width: 1px; height: 18px; background: var(--border); }
+
+/* Timeline canvas — viewport-sized, scrollable container */
+.timeline-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; background: var(--bg-canvas); min-height: 0; }
+.timeline-canvas-wrap { position: sticky; top: 0; left: 0; height: 0; overflow: visible; z-index: 1; }
+.timeline-canvas-wrap canvas { display: block; }
+
+/* Memory chart */
+.memory-section { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--bg-canvas); }
+.memory-header { display: flex; align-items: center; gap: 8px; padding: 4px 16px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+.memory-header h3 { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.memory-header .toggle-arrow { font-size: 10px; color: var(--text-muted); transition: transform 0.2s; }
+.memory-header .toggle-arrow.open { transform: rotate(90deg); }
+.memory-canvas-wrap { height: 120px; overflow: hidden; transition: height 0.2s; }
+.memory-canvas-wrap.collapsed { height: 0; }
+.memory-canvas-wrap canvas { display: block; }
+
+/* ── Table section (below timeline+memory) ── */
+.table-section { flex-shrink: 0; border-top: 1px solid var(--border); height: 30vh; min-height: 60px; max-height: 80vh; overflow-y: auto; background: var(--bg-primary); position: relative; }
+.table-section table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.table-section th { text-align: left; padding: 6px 10px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600; }
+.table-section td { padding: 5px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.table-section tr:hover td { background: rgba(255,255,255,0.04); }
+.table-section tr.selected-row td { background: rgba(233,69,96,0.15); }
+.sync-row td { color: #ff4444 !important; font-weight: bold; }
+.implicit-sync-row td { font-weight: bold; }
+.implicit-sync-row .sync-warn { color: #ff4444; font-size: 14px; cursor: help; }
+.fusion-row td { color: #ce93d8 !important; }
+.marker-row td { color: #00e5ff !important; }
+.fusion-badge { background: #9c27b0; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 6px; }
+.mem-badge { background: #34a853; color: white; padding: 1px 6px; border-radius: 8px; font-size: 10px; margin-left: 4px; }
+.fusion-toggle { cursor: pointer; user-select: none; color: #ce93d8; }
+.fusion-toggle:hover { text-decoration: underline; }
+.fused-ops { display: none; margin-top: 4px; }
+.fused-ops.open { display: block; }
+.fused-ops table { width: 100%; font-size: 11px; margin: 4px 0; border-left: 3px solid #9c27b0; }
+.fused-ops th { background: #1e1e1e !important; padding: 3px 6px !important; font-weight: normal !important; color: #9c27b0 !important; text-transform: none !important; letter-spacing: 0 !important; }
+.fused-ops td { padding: 2px 6px !important; border-bottom: 1px solid #111 !important; color: #bbb !important; font-weight: normal !important; }
+.shape-tag { background: #2a2a2a; color: #8888cc; padding: 1px 5px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 10px; }
+
+/* ── Right inspector panel ── */
+.inspector { width: var(--inspector-width); background: var(--bg-secondary); border-left: 1px solid var(--border); flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; }
+.inspector-header { padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.inspector-header h2 { font-size: 14px; font-weight: 600; }
+.inspector-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.inspector-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 13px; padding: 24px; text-align: center; }
+.inspector-content { display: none; flex-direction: column; }
+.inspector-content.visible { display: flex; }
+.inspector-block { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.inspector-block-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600; }
+.inspector-op-name { font-size: 15px; font-weight: 700; color: var(--accent); word-break: break-all; }
+.inspector-op-meta { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.inspector-shapes { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; }
+.inspector-shapes .shape-line { padding: 3px 0; color: var(--text-secondary); }
+.inspector-shapes .shape-line .shape-val { color: #8888cc; background: #2a2a2a; padding: 1px 6px; border-radius: 3px; }
+.inspector-shapes .shape-arrow { color: var(--text-muted); padding: 2px 0; }
+.inspector-mem { font-family: 'Cascadia Code', 'Fira Code', monospace; }
+.inspector-mem .mem-value { font-size: 16px; font-weight: 700; color: #34a853; }
+.inspector-fused-ops { font-size: 11px; }
+#insp-kernel-content { display: none; }
+#insp-kernel-content.open { display: block !important; }
+#insp-kernel-content pre { margin: 0; padding: 8px; background: #1a1a1a; border-radius: 4px; font-size: 11px; line-height: 1.4; color: #b0b0b0; overflow-x: auto; max-height: 400px; overflow-y: auto; white-space: pre; tab-size: 4; }
+.inspector-fused-ops table { width: 100%; border-collapse: collapse; }
+.inspector-fused-ops th { text-align: left; padding: 4px 6px; color: #9c27b0; font-weight: normal; border-bottom: 1px solid var(--border); }
+.inspector-fused-ops td { padding: 3px 6px; border-bottom: 1px solid rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+/* ── Resize handles ── */
+.resize-handle { width: 5px; cursor: col-resize; background: transparent; flex-shrink: 0; position: relative; z-index: 10; }
+.resize-handle:hover, .resize-handle.active { background: var(--accent); }
+.resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--border); }
+.resize-handle:hover::after, .resize-handle.active::after { background: transparent; }
+
+/* Horizontal resize handle (for table section) */
+.resize-handle-h { height: 5px; cursor: row-resize; background: transparent; flex-shrink: 0; position: relative; z-index: 10; }
+.resize-handle-h:hover, .resize-handle-h.active { background: var(--accent); }
+.resize-handle-h::after { content: ''; position: absolute; left: 0; right: 0; top: 2px; height: 1px; background: var(--border); }
+.resize-handle-h:hover::after, .resize-handle-h.active::after { background: transparent; }
+
+/* Tooltip */
+#tooltip { position: fixed; background: var(--bg-secondary); border: 1px solid var(--accent); padding: 8px 12px; border-radius: 6px; font-size: 12px; pointer-events: none; display: none; z-index: 200; max-width: 400px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+#tooltip .tt-name { font-weight: bold; color: var(--accent); }
+#tooltip .tt-detail { color: var(--text-secondary); margin-top: 3px; }
+#tooltip .tt-ops { color: #ce93d8; margin-top: 4px; font-size: 11px; }
+#tooltip .tt-ops div { margin: 1px 0; }
+#tooltip .tt-caller { color: #80cbc4; margin-top: 3px; font-size: 11px; font-family: 'Cascadia Code', 'Fira Code', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 380px; }
+#tooltip .tt-data { color: #a5d6a7; margin-top: 3px; font-size: 10px; font-family: 'Cascadia Code', 'Fira Code', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 380px; }
+
+/* Inspector: caller location */
+.inspector-caller { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px; }
+.inspector-caller a { color: #80cbc4; text-decoration: none; word-break: break-all; }
+.inspector-caller a:hover { text-decoration: underline; }
+
+/* Inspector: data preview */
+.inspector-data-preview { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 11px; }
+.data-tensor { max-height: 300px; overflow: auto; color: #a5d6a7; }
+.data-shape-label { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; }
+.data-matrix { border-collapse: collapse; }
+.data-matrix td { padding: 1px 5px; text-align: right; white-space: nowrap; background: #1e2e1e; border: 1px solid #2a3a2a; border-radius: 2px; }
+.data-matrix .dv-zero { color: #5a7a5a; }
+.data-matrix .dv-neg { color: #ef9a9a; }
+.data-batch-sep td { border-bottom: 2px solid #4a6a4a !important; }
+.data-ellipsis { color: var(--text-muted); padding: 2px 0; font-style: italic; }
+.data-total { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+
+/* ── Drop zone overlay ── */
+.drop-zone-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: var(--bg-primary);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 24px;
+}
+.drop-zone-overlay.hidden { display: none; }
+.drop-zone-box {
+  width: 520px; max-width: 90vw; padding: 64px 48px;
+  border: 3px dashed var(--border); border-radius: 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 20px;
+  transition: border-color 0.2s, background 0.2s;
+  cursor: pointer; user-select: none;
+}
+.drop-zone-box.drag-over {
+  border-color: var(--accent); background: rgba(233, 69, 96, 0.06);
+}
+.drop-zone-icon { font-size: 56px; opacity: 0.7; }
+.drop-zone-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+.drop-zone-hint { font-size: 14px; color: var(--text-secondary); text-align: center; line-height: 1.6; }
+.drop-zone-hint kbd { background: var(--bg-secondary); border: 1px solid var(--border); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.drop-zone-btn {
+  margin-top: 8px; padding: 10px 28px; border-radius: 6px;
+  background: var(--accent); color: white; border: none;
+  font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+}
+.drop-zone-btn:hover { opacity: 0.85; }
+.drop-zone-error { color: #ff6b6b; font-size: 13px; max-width: 460px; text-align: center; display: none; }
+</style>
+</head>
+<body>
+
+<!-- Drop zone overlay (shown when no trace data is loaded) -->
+<div class="drop-zone-overlay hidden" id="drop-zone-overlay">
+  <div class="drop-zone-box" id="drop-zone-box">
+    <div class="drop-zone-icon">📂</div>
+    <div class="drop-zone-title">Open Trace File</div>
+    <div class="drop-zone-hint">
+      Drag &amp; drop a <kbd>trace_data.js</kbd> file here<br>
+      or click to browse
+    </div>
+    <button class="drop-zone-btn" id="drop-zone-btn">Choose File</button>
+    <div class="drop-zone-error" id="drop-zone-error"></div>
+  </div>
+  <input type="file" id="drop-zone-input" accept=".js" style="display:none">
+</div>
+
+<!-- Main 3-column layout -->
+<div class="app-layout" id="app-layout">
+
+  <!-- Left sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <span class="logo">🔥</span>
+      <h1>Burn Trace Explorer</h1>
+    </div>
+    <div class="sidebar-scroll">
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Summary</div>
+      <div class="stat-row"><span class="stat-label">Total Time:</span><span class="stat-value" id="total-time-value">—</span></div>
+      <div class="stat-row"><span class="stat-label">Operations:</span><span class="stat-value" id="total-ops-value">—</span></div>
+      <div class="stat-row"><span class="stat-label">Sync Count:</span><span class="stat-value" id="sync-count-value">—</span></div>
+      <div class="stat-row"><span class="stat-label">Fusion Ratio:</span><span class="stat-value" id="fusion-ratio-value">—</span></div>
+      <div class="stat-row"><span class="stat-label">Memory:</span><span class="stat-value" id="memory-value">—</span></div>
+      <div class="stat-row"><span class="stat-label">Allocations:</span><span class="stat-value" id="alloc-count-value">—</span></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Legend</div>
+      <div id="legend-container"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Filters</div>
+      <div class="filter-actions">
+        <button onclick="filterShowAll()">Show All</button>
+        <button onclick="filterHideAll()">Hide All</button>
+      </div>
+      <div id="filter-container"></div>
+    </div>
+    </div><!-- /sidebar-scroll -->
+  </div>
+
+  <div class="resize-handle" id="resize-left"></div>
+
+  <!-- Center: timeline + memory + table -->
+  <div class="center-area">
+    <!-- Timeline: header + scrollable canvas -->
+    <div class="timeline-area">
+      <!-- Timeline toolbar -->
+      <div class="timeline-header">
+        <h2>Timeline</h2>
+        <div class="toolbar">
+          <button class="icon-btn" onclick="zoomIn()" title="Zoom In">+</button>
+          <button class="icon-btn" onclick="zoomOut()" title="Zoom Out">−</button>
+          <button onclick="resetZoom()">Reset</button>
+          <span class="zoom-label" id="zoom-level">100%</span>
+          <span class="separator"></span>
+          <button id="unit-btn" onclick="cycleTimeUnit()">ms</button>
+          <span class="separator"></span>
+          <button class="icon-btn" onclick="toggleFullscreen()" title="Fullscreen" id="fs-btn">⛶</button>
+        </div>
+      </div>
+
+      <!-- Timeline canvas -->
+      <div class="timeline-scroll" id="timeline-scroll">
+        <div class="timeline-canvas-wrap">
+          <canvas id="canvas"></canvas>
+        </div>
+        <!-- Spacer to provide scrollable height for virtual scrolling -->
+        <div id="timeline-spacer" style="width:1px;pointer-events:none;"></div>
+      </div>
+    </div><!-- /timeline-area -->
+
+    <!-- Memory chart (coupled with timeline) -->
+    <div class="memory-section">
+      <div class="memory-header" onclick="toggleMemory()">
+        <span class="toggle-arrow open" id="mem-arrow">▶</span>
+        <h3>Cumulative GPU Memory Allocated</h3>
+      </div>
+      <div class="memory-canvas-wrap" id="mem-wrap">
+        <canvas id="mem-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- Resize handle for table -->
+    <div class="resize-handle-h" id="resize-table"></div>
+
+    <!-- Operations table -->
+    <div class="table-section" id="table-section">
+      <div id="op-table"></div>
+    </div>
+  </div>
+
+  <div class="resize-handle" id="resize-right"></div>
+
+  <!-- Right inspector -->
+  <div class="inspector" id="inspector">
+    <div class="inspector-header"><h2>Inspector</h2></div>
+    <div class="inspector-scroll">
+    <div class="inspector-placeholder" id="inspector-placeholder">Click an operation in the timeline or table to inspect details</div>
+    <div class="inspector-content" id="inspector-content">
+      <div class="inspector-block">
+        <div class="inspector-block-title">Operation</div>
+        <div class="inspector-op-name" id="insp-name"></div>
+        <div class="inspector-op-meta" id="insp-meta"></div>
+      </div>
+      <div class="inspector-block" id="insp-shapes-block" style="display:none">
+        <div class="inspector-block-title" id="insp-shapes-title">Output Tensor Shape</div>
+        <div class="inspector-shapes" id="insp-shapes"></div>
+      </div>
+      <div class="inspector-block" id="insp-caller-block" style="display:none">
+        <div class="inspector-block-title">Caller</div>
+        <div class="inspector-caller" id="insp-caller"></div>
+      </div>
+      <div class="inspector-block" id="insp-data-block" style="display:none">
+        <div class="inspector-block-title">Output Data Preview</div>
+        <div class="inspector-data-preview" id="insp-data"></div>
+      </div>
+      <div class="inspector-block" id="insp-mem-block" style="display:none">
+        <div class="inspector-block-title">Memory Delta</div>
+        <div class="inspector-mem" id="insp-mem"></div>
+      </div>
+      <div class="inspector-block" id="insp-fused-block" style="display:none">
+        <div class="inspector-block-title">Fused Operations</div>
+        <div class="inspector-fused-ops" id="insp-fused"></div>
+      </div>
+      <div class="inspector-block" id="insp-debug-block" style="display:none">
+        <div class="inspector-block-title">Debug Data</div>
+        <div class="inspector-debug-data" id="insp-debug" style="font-family:monospace;font-size:12px;white-space:pre-wrap;color:var(--text-secondary);padding:4px 0;"></div>
+      </div>
+      <div class="inspector-block" id="insp-binary-block" style="display:none">
+        <div class="inspector-block-title">Binary Data</div>
+        <div class="inspector-binary-data" id="insp-binary" style="font-family:monospace;font-size:11px;color:var(--text-secondary);padding:4px 0;word-break:break-all;"></div>
+      </div>
+      <div class="inspector-block" id="insp-kernel-block" style="display:none">
+        <div class="inspector-block-title" style="cursor:pointer;user-select:none" onclick="var c=document.getElementById('insp-kernel-content'),t=document.getElementById('insp-kernel-toggle');c.classList.toggle('open');t.innerHTML=c.classList.contains('open')?'&#9660; click to collapse':'&#9654; click to expand'">
+          Kernel Source <span id="insp-kernel-toggle" style="font-size:9px;opacity:0.5">&#9654; click to expand</span>
+        </div>
+        <div id="insp-kernel-content"></div>
+      </div>
+    </div>
+    </div><!-- /inspector-scroll -->
+  </div>
+</div>
+
+<div id="tooltip"><div class="tt-name" id="tt-name"></div><div class="tt-detail" id="tt-detail"></div><div class="tt-caller" id="tt-caller"></div><div class="tt-data" id="tt-data"></div><div class="tt-ops" id="tt-ops"></div></div>
+
+<!-- Load trace data (generated by Rust) -->
+<script src="trace_data.js"></script>
+
+<script>
+/* ── Data & Analysis ── */
+let events = (typeof TRACE_DATA !== 'undefined') ? TRACE_DATA : [];
+
+const CAT_COLORS = {
+  'float': '#4285f4', 'int': '#34a853', 'bool': '#fbbc04',
+  'module': '#ea4335', 'activation': '#ff6d01', 'quantized': '#46bdc6',
+  'transaction': '#7baaf7', 'sync': '#ff4444', 'fusion': '#9c27b0',
+  'marker': '#00e5ff'
+};
+const FUSION_COLORS = ['#e94560', '#9c27b0', '#4285f4', '#34a853', '#ff6d01', '#46bdc6', '#fbbc04', '#7baaf7'];
+
+// Compute analysis from events
+function analyze(events) {
+  const totalOps = events.length;
+  let totalDurationUs = 0;
+  let syncCount = 0;
+  let implicitSyncCount = 0;
+  let fusionCount = 0;
+  let totalMemoryBytes = 0;
+  let allocationCount = 0;
+  const catMap = {};
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    totalDurationUs += e.duration_us;
+    if (e.category === 'sync') syncCount++;
+    if (e.is_sync) implicitSyncCount++;
+    if (e.category === 'fusion') fusionCount++;
+    if (e.memory_bytes) { totalMemoryBytes += e.memory_bytes; allocationCount++; }
+    if (!catMap[e.category]) catMap[e.category] = { count: 0, totalUs: 0, color: CAT_COLORS[e.category] || '#7baaf7' };
+    catMap[e.category].count++;
+    catMap[e.category].totalUs += e.duration_us;
+  }
+  const totalSyncCount = syncCount + implicitSyncCount;
+  const nonSyncCount = totalOps - syncCount;
+  const fusionRatio = nonSyncCount > 0 ? (fusionCount / nonSyncCount * 100) : 0;
+  const categoryStats = Object.entries(catMap)
+    .map(([name, s]) => ({ name, ...s }))
+    .sort((a, b) => b.totalUs - a.totalUs);
+  return { totalOps, totalDurationUs, syncCount: totalSyncCount, explicitSyncCount: syncCount, implicitSyncCount, fusionCount, fusionRatio, totalMemoryBytes, allocationCount, categoryStats };
+}
+
+let analysis = analyze(events);
+let TOTAL_TIME_US = analysis.totalDurationUs;
+
+// ── Precompute unique operation names grouped by category ──
+// Implicit sync ops (is_sync=true) are grouped under 'sync' in the filter sidebar.
+let opNamesByCategory = {};
+let opNameCounts = {};
+let implicitSyncOps = new Set(); // op names that are implicit GPU syncs
+for (let i = 0; i < events.length; i++) {
+  const e = events[i];
+  // Display name: for fusion use "fusion::kind", otherwise use op name
+  const displayName = e.category === 'fusion' ? 'fusion::' + (e.fusion_kind || 'unknown')
+    : e.category === 'sync' ? 'sync' : e.name;
+  if (!opNameCounts[displayName]) opNameCounts[displayName] = 0;
+  opNameCounts[displayName]++;
+  // Group is_sync ops under 'sync' category in filters
+  const filterCategory = e.is_sync ? 'sync' : e.category;
+  if (e.is_sync) implicitSyncOps.add(displayName);
+  if (!opNamesByCategory[filterCategory]) opNamesByCategory[filterCategory] = new Set();
+  opNamesByCategory[filterCategory].add(displayName);
+}
+
+// ── Filtering state ──
+const hiddenOps = new Set();
+// filteredIndices: maps visible row position -> original event index
+let filteredIndices = [];
+
+function getEventDisplayName(e) {
+  return e.category === 'fusion' ? 'fusion::' + (e.fusion_kind || 'unknown')
+    : e.category === 'sync' ? 'sync' : e.name;
+}
+
+function rebuildFilteredIndices() {
+  if (hiddenOps.size === 0) {
+    filteredIndices = null; // null = no filtering, use events directly
+  } else {
+    filteredIndices = [];
+    for (let i = 0; i < events.length; i++) {
+      if (!hiddenOps.has(getEventDisplayName(events[i]))) {
+        filteredIndices.push(i);
+      }
+    }
+  }
+}
+
+// Get the original event index for a given visible row
+function eventAt(visibleRow) {
+  if (!filteredIndices) return visibleRow;
+  return filteredIndices[visibleRow];
+}
+
+// Number of visible rows
+function visibleCount() {
+  return filteredIndices ? filteredIndices.length : events.length;
+}
+
+function populateFilters() {
+  const container = document.getElementById('filter-container');
+  const catOrder = analysis.categoryStats.map(s => s.name);
+  let html = '';
+  for (const cat of catOrder) {
+    const names = opNamesByCategory[cat];
+    if (!names) continue;
+    const color = CAT_COLORS[cat] || '#7baaf7';
+    html += '<div class="filter-group-title"><span class="filter-group-dot" style="background:' + color + '"></span>' + cat + '</div>';
+    const sorted = Array.from(names).sort();
+    for (const name of sorted) {
+      const count = opNameCounts[name] || 0;
+      const isHidden = hiddenOps.has(name);
+      const isImplicitSync = implicitSyncOps.has(name);
+      html += '<div class="filter-item' + (isHidden ? ' hidden' : '') + '" data-op="' + name.replace(/"/g, '&quot;') + '" onclick="toggleFilter(this)">';
+      html += '<span class="filter-check">' + (isHidden ? '' : '\u2713') + '</span>';
+      if (isImplicitSync) html += '<span title="Implicit GPU sync — flushes fusion queue and blocks on GPU readback" style="color:#ff4444;cursor:help;margin-right:2px">\u26a0</span>';
+      html += '<span class="filter-name">' + name + '</span>';
+      html += '<span class="filter-count">' + count + '</span>';
+      html += '</div>';
+    }
+  }
+  container.innerHTML = html;
+}
+
+function toggleFilter(el) {
+  const name = el.dataset.op;
+  if (hiddenOps.has(name)) {
+    hiddenOps.delete(name);
+    el.classList.remove('hidden');
+    el.querySelector('.filter-check').textContent = '\u2713';
+  } else {
+    hiddenOps.add(name);
+    el.classList.add('hidden');
+    el.querySelector('.filter-check').textContent = '';
+  }
+  applyFilters();
+}
+
+function filterShowAll() {
+  hiddenOps.clear();
+  populateFilters();
+  applyFilters();
+}
+
+function filterHideAll() {
+  for (const name in opNameCounts) hiddenOps.add(name);
+  populateFilters();
+  applyFilters();
+}
+
+function applyFilters() {
+  rebuildFilteredIndices();
+  selectedIdx = -1;
+  render();
+  renderMemoryChart();
+  tableRenderedRange = { start: -1, end: -1 };
+  renderTable();
+}
+
+rebuildFilteredIndices();
+
+// ── Precompute sync, implicit sync, and marker event indices (once) ──
+let syncIndices = [];
+let implicitSyncIndices = [];
+let markerIndices = [];
+for (let i = 0; i < events.length; i++) {
+  if (events[i].category === 'sync') syncIndices.push(i);
+  if (events[i].is_sync) implicitSyncIndices.push(i);
+  if (events[i].category === 'marker') markerIndices.push(i);
+}
+
+// ── Precompute cached time range (once) ──
+let cachedTimeRange = (function() {
+  if (events.length === 0) return { min: 0, max: 1 };
+  let min = events[0].start_us;
+  let max = events[0].start_us + events[0].duration_us;
+  for (let i = 1; i < events.length; i++) {
+    const e = events[i];
+    if (e.start_us < min) min = e.start_us;
+    const end = e.start_us + e.duration_us;
+    if (end > max) max = end;
+  }
+  return { min, max: max + (max - min) * 0.02 };
+})();
+
+function getTimeRange() { return cachedTimeRange; }
+
+// ── Precompute memory chart points (once) ──
+let memPoints = (function() {
+  let cumulative = 0;
+  const pts = [];
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (!e.memory_bytes) continue;
+    cumulative += e.memory_bytes;
+    pts.push({ time: e.start_us, endTime: e.start_us + e.duration_us, mem: cumulative, name: e.name, bytes: e.memory_bytes, category: e.category, opIndex: e.op_index, shape: e.output_shape });
+  }
+  return pts;
+})();
+let memMaxMem = (function() {
+  let m = 1;
+  for (let i = 0; i < memPoints.length; i++) {
+    if (memPoints[i].mem > m) m = memPoints[i].mem;
+  }
+  return m;
+})();
+
+// Populate sidebar
+function formatBytes(b) {
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+  return b + ' B';
+}
+
+function formatShape(s) { return '[' + s.join(', ') + ']'; }
+
+function formatDataValue(v) {
+  if (v === null || v === undefined) return 'NaN';
+  if (!isFinite(v)) return v > 0 ? 'Inf' : '-Inf';
+  if (Number.isInteger(v) && Math.abs(v) < 1e15) return v.toString();
+  if (Math.abs(v) < 0.001 && v !== 0) return v.toExponential(3);
+  if (Math.abs(v) >= 1e6) return v.toExponential(3);
+  return v.toPrecision(5).replace(/\.?0+$/, '');
+}
+
+function formatDataCompact(arr, maxShow) {
+  if (!arr || arr.length === 0) return '';
+  const n = Math.min(arr.length, maxShow || 8);
+  let s = '[' + arr.slice(0, n).map(formatDataValue).join(', ');
+  if (arr.length > n) s += ', \u2026';
+  return s + ']';
+}
+
+/**
+ * Build an HTML table that displays tensor data respecting its shape.
+ * For >=2D tensors, the last two dims form rows × cols; higher dims
+ * are shown as separate blocks with a separator.
+ * For 1D, renders a single row. For scalar, a single value.
+ */
+function buildTensorGrid(vals, shape) {
+  if (!shape || shape.length === 0) {
+    // Scalar or unknown — flat display.
+    return '<table class="data-matrix"><tr><td>' + formatDataValue(vals[0]) + '</td></tr></table>';
+  }
+
+  const totalElems = shape.reduce((a, b) => a * b, 1);
+  const ndim = shape.length;
+  let rows, cols, batchSize;
+
+  if (ndim === 1) {
+    rows = 1; cols = shape[0]; batchSize = 1;
+  } else {
+    rows = shape[ndim - 2];
+    cols = shape[ndim - 1];
+    batchSize = ndim > 2 ? shape.slice(0, ndim - 2).reduce((a, b) => a * b, 1) : 1;
+  }
+
+  const matrixSize = rows * cols;
+  // Limit how many matrices and rows we show to keep the DOM sane.
+  const maxBatches = Math.min(batchSize, 8);
+  const maxRows = Math.min(rows, 32);
+  const maxCols = Math.min(cols, 32);
+
+  let html = '';
+
+  for (let b = 0; b < maxBatches; b++) {
+    if (batchSize > 1) {
+      // Show batch index for higher-dim tensors.
+      const batchIdx = [];
+      let rem = b;
+      const batchDims = shape.slice(0, ndim - 2);
+      for (let d = batchDims.length - 1; d >= 0; d--) {
+        batchIdx.unshift(rem % batchDims[d]);
+        rem = Math.floor(rem / batchDims[d]);
+      }
+      html += '<div class="data-shape-label">[' + batchIdx.join(', ') + ', :, :]</div>';
+    }
+    html += '<table class="data-matrix">';
+    const baseOff = b * matrixSize;
+    for (let r = 0; r < maxRows; r++) {
+      html += '<tr' + (b < maxBatches - 1 && r === maxRows - 1 ? ' class="data-batch-sep"' : '') + '>';
+      for (let c = 0; c < maxCols; c++) {
+        const idx = baseOff + r * cols + c;
+        if (idx < vals.length) {
+          const v = vals[idx];
+          const cls = v === 0 ? ' class="dv-zero"' : (v < 0 ? ' class="dv-neg"' : '');
+          html += '<td' + cls + '>' + formatDataValue(v) + '</td>';
+        } else {
+          html += '<td class="dv-zero">\u00b7</td>';
+        }
+      }
+      if (cols > maxCols) html += '<td style="color:var(--text-muted)">\u2026</td>';
+      html += '</tr>';
+    }
+    if (rows > maxRows) {
+      html += '<tr><td colspan="' + (maxCols + (cols > maxCols ? 1 : 0)) + '" class="data-ellipsis">\u22ee ' + (rows - maxRows) + ' more rows</td></tr>';
+    }
+    html += '</table>';
+  }
+  if (batchSize > maxBatches) {
+    html += '<div class="data-ellipsis">\u2026 ' + (batchSize - maxBatches) + ' more slices</div>';
+  }
+  return html;
+}
+
+let timeUnit = 'ms';
+function formatDuration(us) {
+  if (timeUnit === 'us') return us.toFixed(1) + 'us';
+  return (us / 1000).toFixed(3) + 'ms';
+}
+
+function populateSidebar() {
+  document.getElementById('total-time-value').textContent = formatDuration(TOTAL_TIME_US);
+  document.getElementById('total-ops-value').textContent = analysis.totalOps.toLocaleString();
+  const syncLabel = analysis.implicitSyncCount > 0
+    ? analysis.syncCount + ' (' + analysis.explicitSyncCount + '+' + analysis.implicitSyncCount + '\u26a0)'
+    : String(analysis.syncCount);
+  document.getElementById('sync-count-value').textContent = syncLabel;
+  document.getElementById('fusion-ratio-value').textContent = analysis.fusionRatio.toFixed(1) + '%';
+  document.getElementById('memory-value').textContent = formatBytes(analysis.totalMemoryBytes);
+  document.getElementById('alloc-count-value').textContent = analysis.allocationCount;
+
+  const legend = document.getElementById('legend-container');
+  legend.innerHTML = analysis.categoryStats.map(s =>
+    '<div class="legend-item"><span class="legend-dot" style="background:' + s.color + '"></span><span class="legend-label">' + s.name + '</span></div>'
+  ).join('');
+}
+
+function cycleTimeUnit() {
+  timeUnit = timeUnit === 'ms' ? 'us' : 'ms';
+  document.getElementById('unit-btn').textContent = timeUnit;
+  document.getElementById('total-time-value').textContent = formatDuration(TOTAL_TIME_US);
+  render();
+  renderMemoryChart();
+  renderTable();
+  if (selectedIdx >= 0) selectEvent(selectedIdx);
+}
+
+/* ── Canvas setup ── */
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+const ttName = document.getElementById('tt-name');
+const ttDetail = document.getElementById('tt-detail');
+const ttOps = document.getElementById('tt-ops');
+const ttCaller = document.getElementById('tt-caller');
+const ttData = document.getElementById('tt-data');
+
+let zoom = 1;
+let panX = 0;
+let isDragging = false;
+let dragStartX = 0;
+let dragStartPan = 0;
+let selectedIdx = -1;
+
+const ROW_HEIGHT = 26;
+const HEADER_HEIGHT = 28;
+const LABEL_WIDTH = 160;
+
+/* ── Timeline rendering (virtualized) ── */
+function render() {
+  const container = document.getElementById('timeline-scroll');
+  const dpr = window.devicePixelRatio || 1;
+  const width = container.clientWidth;
+  const viewH = container.clientHeight || 600;
+  const numRows = visibleCount();
+  const totalContentH = HEADER_HEIGHT + numRows * ROW_HEIGHT;
+
+  // Set spacer to give the container the right scrollable height
+  document.getElementById('timeline-spacer').style.height = totalContentH + 'px';
+
+  // Canvas is only viewport-sized (not full content height)
+  const canvasH = viewH;
+  canvas.width = width * dpr;
+  canvas.height = canvasH * dpr;
+  canvas.style.width = width + 'px';
+  canvas.style.height = canvasH + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  ctx.fillStyle = '#141414';
+  ctx.fillRect(0, 0, width, canvasH);
+
+  const scrollTop = container.scrollTop || 0;
+
+  const range = getTimeRange();
+  const timeSpan = (range.max - range.min) / zoom;
+  const barAreaLeft = LABEL_WIDTH;
+  const barAreaWidth = width - LABEL_WIDTH - 10;
+  const timeToX = (t) => barAreaLeft + ((t - range.min) / timeSpan - panX) * barAreaWidth;
+
+  // Determine visible row range (in filtered row space)
+  const firstVisible = Math.max(0, Math.floor((scrollTop - HEADER_HEIGHT) / ROW_HEIGHT));
+  const lastVisible = Math.min(numRows - 1, Math.ceil((scrollTop + canvasH - HEADER_HEIGHT) / ROW_HEIGHT));
+
+  // We need to count fusions before firstVisible for color cycling
+  let fusionIdx = 0;
+  if (firstVisible > 0) {
+    for (let i = 0; i < firstVisible; i++) {
+      const ei = eventAt(i);
+      if (events[ei].category === 'fusion') fusionIdx++;
+    }
+  }
+
+  // Draw sync vertical lines (always visible, regardless of scroll/filter)
+  for (let si = 0; si < syncIndices.length; si++) {
+    const origIdx = syncIndices[si];
+    // Only draw if sync is not filtered out
+    if (hiddenOps.has('sync')) continue;
+    const e = events[origIdx];
+    const syncX1 = timeToX(e.start_us);
+    const syncX2 = timeToX(e.start_us + e.duration_us);
+    const syncW = Math.max(syncX2 - syncX1, 3);
+
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.08)';
+    ctx.fillRect(syncX1, HEADER_HEIGHT, syncW, canvasH - HEADER_HEIGHT);
+
+    ctx.strokeStyle = 'rgba(255, 68, 68, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(syncX1, HEADER_HEIGHT);
+    ctx.lineTo(syncX1, canvasH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const syncEndX = syncX1 + syncW;
+    ctx.strokeStyle = '#ff4444';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(syncEndX, HEADER_HEIGHT);
+    ctx.lineTo(syncEndX, canvasH);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+  }
+
+  // Draw implicit sync vertical lines (into_data ops that flush GPU)
+  for (let si = 0; si < implicitSyncIndices.length; si++) {
+    const origIdx = implicitSyncIndices[si];
+    const e = events[origIdx];
+    const displayName = getEventDisplayName(e);
+    if (hiddenOps.has(displayName)) continue;
+    const isX = timeToX(e.start_us);
+
+    // Dashed red line at the start of the into_data op
+    ctx.strokeStyle = 'rgba(255, 68, 68, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(isX, HEADER_HEIGHT);
+    ctx.lineTo(isX, canvasH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Draw marker/span overlays (always visible, regardless of scroll/filter)
+  if (!hiddenOps.has('marker')) {
+    for (let mi = 0; mi < markerIndices.length; mi++) {
+      const e = events[markerIndices[mi]];
+      const mx = timeToX(e.start_us);
+      if (e.is_span && e.duration_us > 0) {
+        // Span: semi-transparent rectangle
+        const mx2 = timeToX(e.start_us + e.duration_us);
+        const spanW = Math.max(mx2 - mx, 2);
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.06)';
+        ctx.fillRect(mx, HEADER_HEIGHT, spanW, canvasH - HEADER_HEIGHT);
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(mx, HEADER_HEIGHT, spanW, canvasH - HEADER_HEIGHT);
+        ctx.setLineDash([]);
+      } else {
+        // Instant marker: vertical line
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 3]);
+        ctx.beginPath();
+        ctx.moveTo(mx, HEADER_HEIGHT);
+        ctx.lineTo(mx, canvasH);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  // Draw only visible rows
+  for (let row = firstVisible; row <= lastVisible; row++) {
+    const i = eventAt(row);
+    const e = events[i];
+    const yAbsolute = HEADER_HEIGHT + row * ROW_HEIGHT;
+    const y = yAbsolute - scrollTop; // screen position
+
+    if (y + ROW_HEIGHT < 0 || y > canvasH) continue;
+
+    // Selection highlight
+    if (i === selectedIdx) {
+      ctx.fillStyle = 'rgba(233,69,96,0.12)';
+      ctx.fillRect(0, y, width, ROW_HEIGHT);
+    } else if (i % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.015)';
+      ctx.fillRect(0, y, width, ROW_HEIGHT);
+    }
+
+    if (e.category === 'sync') {
+      // Row highlight and label (vertical lines drawn in separate always-visible pass above)
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+      ctx.fillRect(0, y, width, ROW_HEIGHT);
+
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 11px "Segoe UI", system-ui, sans-serif';
+      ctx.fillText('SYNC', 8, y + 17);
+
+      ctx.font = '10px monospace';
+      ctx.fillStyle = '#ff6666';
+      ctx.fillText(formatDuration(e.duration_us), 50, y + 17);
+
+    } else if (e.category === 'fusion') {
+      const barStart = timeToX(e.start_us);
+      const barEnd = timeToX(e.start_us + e.duration_us);
+      const barWidth = Math.max(barEnd - barStart, 6);
+      const color = FUSION_COLORS[fusionIdx % FUSION_COLORS.length];
+      fusionIdx++;
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(14, y + ROW_HEIGHT / 2, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#e0e0e0';
+      ctx.font = '11px "Segoe UI", system-ui, sans-serif';
+      const kind = e.fusion_kind || 'unknown';
+      ctx.fillText('fusion::' + kind, 24, y + 17);
+
+      // Solid color bar (no per-bar gradient for performance)
+      const barH = ROW_HEIGHT - 8;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(barStart, y + 4, barWidth, barH, 3);
+      ctx.fill();
+
+      // Slight fade on right edge
+      if (barWidth > 20) {
+        ctx.fillStyle = 'rgba(20,20,20,0.4)';
+        ctx.fillRect(barStart + barWidth - Math.min(barWidth * 0.3, 40), y + 4, Math.min(barWidth * 0.3, 40), barH);
+      }
+
+      if (barWidth > 60) {
+        ctx.fillStyle = 'white';
+        ctx.font = '10px monospace';
+        const fused = e.num_fused_ops || '?';
+        ctx.fillText(fused + ' ops, ' + formatDuration(e.duration_us), barStart + 4, y + 16);
+      }
+    } else if (e.category === 'marker') {
+      const markerColor = '#00e5ff';
+      // Diamond icon instead of circle
+      ctx.fillStyle = markerColor;
+      ctx.beginPath();
+      const cx = 14, cy = y + ROW_HEIGHT / 2;
+      ctx.moveTo(cx, cy - 5);
+      ctx.lineTo(cx + 5, cy);
+      ctx.lineTo(cx, cy + 5);
+      ctx.lineTo(cx - 5, cy);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = '11px "Segoe UI", system-ui, sans-serif';
+      let label = e.name;
+      if (label.length > 18) label = label.substring(0, 17) + '\u2026';
+      ctx.fillText(label, 24, y + 17);
+
+      if (e.is_span && e.duration_us > 0) {
+        // Span: semi-transparent bar
+        const barStart = timeToX(e.start_us);
+        const barEnd = timeToX(e.start_us + e.duration_us);
+        const barWidth = Math.max(barEnd - barStart, 6);
+        const barH = ROW_HEIGHT - 8;
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.2)';
+        ctx.beginPath();
+        ctx.roundRect(barStart, y + 4, barWidth, barH, 3);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        if (barWidth > 50) {
+          ctx.fillStyle = 'rgba(0, 229, 255, 0.9)';
+          ctx.font = '10px monospace';
+          ctx.fillText(formatDuration(e.duration_us), barStart + 4, y + 16);
+        }
+      } else {
+        // Instant marker: vertical line at position
+        const mx = timeToX(e.start_us);
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(mx, y + 2);
+        ctx.lineTo(mx, y + ROW_HEIGHT - 2);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        // Small triangle pointing down at the marker position
+        ctx.fillStyle = '#00e5ff';
+        ctx.beginPath();
+        ctx.moveTo(mx - 4, y + 2);
+        ctx.lineTo(mx + 4, y + 2);
+        ctx.lineTo(mx, y + 8);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+    } else {
+      const barStart = timeToX(e.start_us);
+      const barEnd = timeToX(e.start_us + e.duration_us);
+      const barWidth = Math.max(barEnd - barStart, 2);
+      const color = CAT_COLORS[e.category] || '#7baaf7';
+
+      // Implicit sync: red-tinted row background
+      if (e.is_sync) {
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.10)';
+        ctx.fillRect(0, y, width, ROW_HEIGHT);
+      }
+
+      if (e.is_sync) {
+        // Implicit sync: warning triangle replaces the dot
+        ctx.fillStyle = '#ff4444';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText('\u26a0', 6, y + 17);
+      } else {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(14, y + ROW_HEIGHT / 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = e.is_sync ? '#ff9800' : '#ccc';
+      ctx.font = e.is_sync ? 'bold 11px "Segoe UI", system-ui, sans-serif' : '11px "Segoe UI", system-ui, sans-serif';
+      let label = e.name;
+      if (label.length > 18) label = label.substring(0, 17) + '\u2026';
+      ctx.fillText(label, 24, y + 17);
+
+      const barH = ROW_HEIGHT - 8;
+      // Implicit sync: bar has red tint
+      if (e.is_sync) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(barStart, y + 4, barWidth, barH, 3);
+        ctx.fill();
+        // Red border on the bar
+        ctx.strokeStyle = 'rgba(255, 68, 68, 0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(barStart, y + 4, barWidth, barH, 3);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      } else {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(barStart, y + 4, barWidth, barH, 3);
+        ctx.fill();
+      }
+
+      if (barWidth > 50) {
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = '10px monospace';
+        ctx.fillText(formatDuration(e.duration_us), barStart + 4, y + 16);
+      }
+    }
+  }
+
+  // Time axis header (drawn last, on top)
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, width, HEADER_HEIGHT);
+  ctx.strokeStyle = '#333';
+  ctx.beginPath();
+  ctx.moveTo(0, HEADER_HEIGHT);
+  ctx.lineTo(width, HEADER_HEIGHT);
+  ctx.stroke();
+
+  const tickCount = Math.max(Math.floor(barAreaWidth / 100), 4);
+  ctx.fillStyle = '#888';
+  ctx.font = '10px monospace';
+  for (let i = 0; i <= tickCount; i++) {
+    const t = range.min + (i / tickCount) * timeSpan + panX * timeSpan;
+    const x = barAreaLeft + (i / tickCount) * barAreaWidth;
+    ctx.fillText(formatDuration(t - range.min), x, 16);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.beginPath();
+    ctx.moveTo(x, HEADER_HEIGHT);
+    ctx.lineTo(x, canvasH);
+    ctx.stroke();
+  }
+
+  document.getElementById('zoom-level').textContent = Math.round(zoom * 100) + '%';
+}
+
+/* ── Inspector ── */
+function selectEvent(idx, fromTable) {
+  if (idx < 0 || idx >= events.length) return;
+  selectedIdx = idx;
+  const e = events[idx];
+
+  document.getElementById('inspector-placeholder').style.display = 'none';
+  const content = document.getElementById('inspector-content');
+  content.classList.add('visible');
+
+  // Name
+  const nameEl = document.getElementById('insp-name');
+  if (e.category === 'fusion') {
+    nameEl.textContent = 'fusion::' + (e.fusion_kind || 'unknown') + ' (' + (e.num_fused_ops || '?') + ' ops, ' + formatDuration(e.duration_us) + ')';
+  } else if (e.category === 'sync') {
+    nameEl.textContent = 'SYNC (' + formatDuration(e.duration_us) + ')';
+  } else if (e.category === 'marker') {
+    const kind = e.is_span ? 'span' : 'marker';
+    const dur = e.is_span ? ' (' + formatDuration(e.duration_us) + ')' : '';
+    nameEl.textContent = kind + ': ' + e.name + dur;
+  } else {
+    nameEl.textContent = e.name;
+  }
+
+  // Meta
+  const metaEl = document.getElementById('insp-meta');
+  let metaText = 'Category: ' + e.category + '  |  Start: ' + formatDuration(e.start_us) + '  |  Duration: ' + formatDuration(e.duration_us);
+  if (e.is_sync) metaText += '\n\u26a0 Implicit GPU sync — flushes fusion queue and blocks on GPU readback';
+  if (e.is_fusion_fallback) metaText += '\n\u26a0 Fusion fallback — part of a fusion pattern but executed as a separate kernel launch';
+  metaEl.textContent = metaText;
+
+  // Shapes
+  const shapesBlock = document.getElementById('insp-shapes-block');
+  const shapesTitle = document.getElementById('insp-shapes-title');
+  const shapesEl = document.getElementById('insp-shapes');
+  const hasInputs = e.input_shapes && e.input_shapes.length > 0;
+  const hasOutput = !!e.output_shape;
+  const hasFusedShapes = e.fused_ops && e.fused_ops.length > 0;
+  if (hasInputs || hasOutput || hasFusedShapes) {
+    shapesBlock.style.display = '';
+    let shapesHtml = '';
+    if (hasFusedShapes) {
+      shapesTitle.textContent = 'INPUT/OUTPUT TENSOR SHAPES';
+      // Build set of tensor IDs belonging to fallback ops for dimming.
+      const fallbackInputTids = new Set();
+      const fallbackOutputTids = new Set();
+      if (e.fused_ops) {
+        for (const op of e.fused_ops) {
+          if (op.is_fallback) {
+            if (op.input_ids) for (const tid of op.input_ids) fallbackInputTids.add(tid);
+            if (op.output_ids) for (const tid of op.output_ids) fallbackOutputTids.add(tid);
+          }
+        }
+      }
+      // Show input shapes from captured handles if available, else from first fused op
+      if (e.fusion_inputs && e.fusion_inputs.length > 0) {
+        for (const fi of e.fusion_inputs) {
+          const isFb = fi.tensor_id && fallbackInputTids.has(fi.tensor_id);
+          const dimStyle = isFb ? ' style="opacity:0.5"' : '';
+          const dtypeLabel = fi.dtype ? ' <span style="opacity:0.5;font-size:11px">' + fi.dtype + '</span>' : '';
+          const tidLabel = fi.tensor_id ? ' <span style="opacity:0.4;font-size:9px;font-family:monospace">' + fi.tensor_id + '</span>' : '';
+          shapesHtml += '<div class="shape-line"' + dimStyle + '><span class="shape-val">' + formatShape(fi.shape) + '</span>' + dtypeLabel + tidLabel + '</div>';
+        }
+      } else {
+        const firstOp = e.fused_ops[0];
+        for (const s of firstOp.input_shapes) {
+          shapesHtml += '<div class="shape-line"><span class="shape-val">' + formatShape(s) + '</span></div>';
+        }
+      }
+      shapesHtml += '<div class="shape-arrow">\u2192</div>';
+      // Show output shapes from captured handles + any additional shapes
+      // from the last fused op (e.g. zero-copy reshape) not already shown.
+      const shown = new Set();
+      if (e.fusion_outputs && e.fusion_outputs.length > 0) {
+        for (const fo of e.fusion_outputs) {
+          shown.add(JSON.stringify(fo.shape));
+          const isFb = fo.tensor_id && fallbackOutputTids.has(fo.tensor_id);
+          const dimStyle = isFb ? ' style="opacity:0.5"' : '';
+          const dtypeLabel = fo.dtype ? ' <span style="opacity:0.5;font-size:11px">' + fo.dtype + '</span>' : '';
+          const tidLabel = fo.tensor_id ? ' <span style="opacity:0.4;font-size:9px;font-family:monospace">' + fo.tensor_id + '</span>' : '';
+          shapesHtml += '<div class="shape-line"' + dimStyle + '><span class="shape-val">' + formatShape(fo.shape) + '</span>' + dtypeLabel + tidLabel + '</div>';
+        }
+      }
+      // Add the last fused op's output if not already shown (zero-copy ops like reshape)
+      const lastOp = e.fused_ops[e.fused_ops.length - 1];
+      for (const s of lastOp.output_shapes) {
+        const key = JSON.stringify(s);
+        if (!shown.has(key)) {
+          shapesHtml += '<div class="shape-line"><span class="shape-val">' + formatShape(s) + '</span> <span style="opacity:0.5;font-size:11px">view</span></div>';
+        }
+      }
+    } else {
+      shapesTitle.textContent = (hasInputs && hasOutput) ? 'INPUT/OUTPUT TENSOR SHAPES' : hasOutput ? 'OUTPUT TENSOR SHAPE' : 'INPUT TENSOR SHAPES';
+      if (hasInputs) {
+        for (const s of e.input_shapes) {
+          shapesHtml += '<div class="shape-line"><span class="shape-val">' + formatShape(s) + '</span></div>';
+        }
+        if (hasOutput) shapesHtml += '<div class="shape-arrow">\u2192</div>';
+      }
+      if (hasOutput) {
+        shapesHtml += '<div class="shape-line"><span class="shape-val">' + formatShape(e.output_shape) + '</span></div>';
+      }
+    }
+    shapesEl.innerHTML = shapesHtml;
+  } else {
+    shapesBlock.style.display = 'none';
+  }
+
+  // Caller
+  const callerBlock = document.getElementById('insp-caller-block');
+  const callerEl = document.getElementById('insp-caller');
+  if (e.caller) {
+    callerBlock.style.display = '';
+    callerEl.innerHTML = '<a title="' + e.caller.replace(/"/g, '&quot;') + '">' + e.caller + '</a>';
+  } else {
+    callerBlock.style.display = 'none';
+  }
+
+  // Data preview
+  const dataBlock = document.getElementById('insp-data-block');
+  const dataEl = document.getElementById('insp-data');
+  // Collect input + output data sources
+  const inputSources = [];
+  const outputSources = [];
+  // Build fallback tensor ID sets for dimming
+  const fbInTids = new Set();
+  const fbOutTids = new Set();
+  if (e.fused_ops) {
+    for (const op of e.fused_ops) {
+      if (op.is_fallback) {
+        if (op.input_ids) for (const tid of op.input_ids) fbInTids.add(tid);
+        if (op.output_ids) for (const tid of op.output_ids) fbOutTids.add(tid);
+      }
+    }
+  }
+  if (e.fusion_inputs && e.fusion_inputs.length > 0) {
+    for (const fi of e.fusion_inputs) {
+      inputSources.push({ vals: fi.data, shape: fi.shape, dtype: fi.dtype, isFallback: fi.tensor_id && fbInTids.has(fi.tensor_id) });
+    }
+  }
+  if (e.fusion_outputs && e.fusion_outputs.length > 0) {
+    for (const fo of e.fusion_outputs) {
+      outputSources.push({ vals: fo.data, shape: fo.shape, dtype: fo.dtype, isFallback: fo.tensor_id && fbOutTids.has(fo.tensor_id) });
+    }
+  } else if (e.data_preview && e.data_preview.length > 0) {
+    outputSources.push({ vals: e.data_preview, shape: e.data_shape || e.output_shape, dtype: null, isFallback: false });
+  }
+  const hasInputData = inputSources.length > 0;
+  const hasOutputData = outputSources.length > 0;
+  if (hasInputData || hasOutputData) {
+    dataBlock.style.display = '';
+    let html = '';
+    // Render inputs
+    if (hasInputData) {
+      html += '<div class="data-shape-label" style="font-weight:600;color:#90caf9">Inputs</div>';
+      for (let di = 0; di < inputSources.length; di++) {
+        const { vals, shape, dtype } = inputSources[di];
+        if (inputSources.length > 1) {
+          html += '<div class="data-shape-label" style="margin-top:' + (di > 0 ? '8' : '0') + 'px">Input ' + di + (dtype ? ' <span style="opacity:0.6">(' + dtype + ')</span>' : '') + '</div>';
+        }
+        if (shape) {
+          html += '<div class="data-shape-label">Shape: ' + formatShape(shape) + '</div>';
+        }
+        html += '<div class="data-tensor">' + buildTensorGrid(vals, shape) + '</div>';
+        const totalElems = shape ? shape.reduce((a, b) => a * b, 1) : null;
+        if (totalElems && totalElems > vals.length) {
+          html += '<div class="data-total">Showing ' + vals.length + ' of ' + totalElems.toLocaleString() + ' values</div>';
+        }
+      }
+    }
+    // Render outputs
+    if (hasOutputData) {
+      if (hasInputData) html += '<div style="border-top:1px solid #333;margin:8px 0"></div>';
+      html += '<div class="data-shape-label" style="font-weight:600;color:#a5d6a7">Outputs</div>';
+      for (let di = 0; di < outputSources.length; di++) {
+        const { vals, shape, dtype, isFallback } = outputSources[di];
+        if (isFallback) html += '<div style="opacity:0.5">';
+        if (outputSources.length > 1) {
+          html += '<div class="data-shape-label" style="margin-top:' + (di > 0 ? '8' : '0') + 'px">Output ' + di + (dtype ? ' <span style="opacity:0.6">(' + dtype + ')</span>' : '') + '</div>';
+        }
+        if (shape) {
+          html += '<div class="data-shape-label">Shape: ' + formatShape(shape) + '</div>';
+        }
+        html += '<div class="data-tensor">' + buildTensorGrid(vals, shape) + '</div>';
+        const totalElems = shape ? shape.reduce((a, b) => a * b, 1) : null;
+        if (totalElems && totalElems > vals.length) {
+          html += '<div class="data-total">Showing ' + vals.length + ' of ' + totalElems.toLocaleString() + ' values</div>';
+        }
+        if (isFallback) html += '</div>';
+      }
+    }
+    dataEl.innerHTML = html;
+  } else {
+    dataBlock.style.display = 'none';
+  }
+
+  // Memory
+  const memBlock = document.getElementById('insp-mem-block');
+  const memEl = document.getElementById('insp-mem');
+  if (e.memory_bytes) {
+    memBlock.style.display = '';
+    memEl.innerHTML = '<div class="mem-value">+' + formatBytes(e.memory_bytes) + '</div>';
+  } else {
+    memBlock.style.display = 'none';
+  }
+
+  // Fused ops — with shape-matched data previews
+  const fusedBlock = document.getElementById('insp-fused-block');
+  const fusedEl = document.getElementById('insp-fused');
+  if (e.fused_ops && e.fused_ops.length > 0) {
+    fusedBlock.style.display = '';
+    // Build tensor_id → data maps for exact matching (no shape heuristics)
+    const inputById = {};
+    for (const d of (e.fusion_inputs || [])) {
+      if (d.tensor_id) inputById[d.tensor_id] = d;
+    }
+    const outputById = {};
+    for (const d of (e.fusion_outputs || [])) {
+      if (d.tensor_id) outputById[d.tensor_id] = d;
+    }
+
+    let html = '<table><thead><tr><th>#</th><th>Op</th><th>In</th><th>Out</th></tr></thead><tbody>';
+    for (let j = 0; j < e.fused_ops.length; j++) {
+      const op = e.fused_ops[j];
+      // Build input shapes with data annotations (matched by tensor ID)
+      const inIds = op.input_ids || [];
+      const ins = op.input_shapes.map(function(s, idx) {
+        const tid = inIds[idx];
+        const matched = tid ? (inputById[tid] || outputById[tid]) : null;
+        const tip = tid || '';
+        let tag = '<span class="shape-tag" title="' + (tip ? 'id=' + tip : '') + '">' + formatShape(s) + '</span>';
+        if (matched) {
+          const color = inputById[tid] ? '#90caf9' : '#a5d6a7';
+          tag += '<span style="color:' + color + ';font-size:9px;font-family:monospace;margin-left:2px">' + formatDataCompact(matched.data, 3) + '</span>';
+        }
+        return tag;
+      }).join(' ');
+      // Build output shapes with data annotations (matched by tensor ID)
+      const outIds = op.output_ids || [];
+      const outs = op.output_shapes.map(function(s, idx) {
+        const tid = outIds[idx];
+        const matched = tid ? (outputById[tid] || inputById[tid]) : null;
+        const tip = tid || '';
+        let tag = '<span class="shape-tag" title="' + (tip ? 'id=' + tip : '') + '">' + formatShape(s) + '</span>';
+        if (matched) {
+          const color = outputById[tid] ? '#a5d6a7' : '#90caf9';
+          tag += '<span style="color:' + color + ';font-size:9px;font-family:monospace;margin-left:2px">' + formatDataCompact(matched.data, 3) + '</span>';
+        }
+        return tag;
+      }).join(' ');
+      if (op.is_fallback) {
+        html += '<tr style="opacity:0.5" title="Executed as a separate kernel launch (not part of the fused kernel)"><td>' + (j+1) + '</td><td>\u26a0 ' + op.name + '</td><td>' + ins + '</td><td>' + outs + '</td></tr>';
+      } else {
+        html += '<tr><td>' + (j+1) + '</td><td>' + op.name + '</td><td>' + ins + '</td><td>' + outs + '</td></tr>';
+      }
+    }
+    html += '</tbody></table>';
+    fusedEl.innerHTML = html;
+  } else {
+    fusedBlock.style.display = 'none';
+  }
+
+  // Debug data (markers/spans)
+  const debugBlock = document.getElementById('insp-debug-block');
+  const debugEl = document.getElementById('insp-debug');
+  if (e.debug_data) {
+    debugBlock.style.display = '';
+    debugEl.textContent = e.debug_data;
+  } else {
+    debugBlock.style.display = 'none';
+  }
+
+  // Binary data (markers/spans)
+  const binaryBlock = document.getElementById('insp-binary-block');
+  const binaryEl = document.getElementById('insp-binary');
+  if (e.binary_data) {
+    binaryBlock.style.display = '';
+    // Decode base64 and show hex dump
+    try {
+      const raw = atob(e.binary_data);
+      const bytes = new Uint8Array(raw.length);
+      for (let bi = 0; bi < raw.length; bi++) bytes[bi] = raw.charCodeAt(bi);
+      const maxShow = 256;
+      let hexLines = '';
+      for (let off = 0; off < Math.min(bytes.length, maxShow); off += 16) {
+        const slice = bytes.slice(off, off + 16);
+        const hex = Array.from(slice).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        const ascii = Array.from(slice).map(b => b >= 32 && b < 127 ? String.fromCharCode(b) : '.').join('');
+        hexLines += off.toString(16).padStart(8, '0') + '  ' + hex.padEnd(48, ' ') + '  ' + ascii + '\n';
+      }
+      if (bytes.length > maxShow) hexLines += '... (' + bytes.length + ' bytes total)\n';
+      binaryEl.textContent = hexLines;
+    } catch (_) {
+      binaryEl.textContent = e.binary_data;
+    }
+  } else {
+    binaryBlock.style.display = 'none';
+  }
+
+  // Kernel source (fusion events only)
+  const kernelBlock = document.getElementById('insp-kernel-block');
+  const kernelContent = document.getElementById('insp-kernel-content');
+  const kernelToggle = document.getElementById('insp-kernel-toggle');
+  if (e.kernel_sources && e.kernel_sources.length > 0) {
+    kernelBlock.style.display = '';
+    kernelContent.classList.remove('open');
+    kernelToggle.innerHTML = '&#9654; click to expand';
+    let khtml = '';
+    for (let ki = 0; ki < e.kernel_sources.length; ki++) {
+      if (e.kernel_sources.length > 1) {
+        khtml += '<div style="color:var(--text-muted);font-size:10px;margin:' + (ki > 0 ? '8px' : '0') + ' 0 4px">Kernel ' + ki + '</div>';
+      }
+      khtml += '<pre>' + e.kernel_sources[ki].replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>';
+    }
+    kernelContent.innerHTML = khtml;
+  } else {
+    kernelBlock.style.display = 'none';
+  }
+
+  // Scroll timeline to this row when clicking from the table
+  if (fromTable) {
+    // Find the filtered row position for this event index
+    const filteredRow = filteredIndices ? filteredIndices.indexOf(idx) : idx;
+    if (filteredRow >= 0) {
+      const container = document.getElementById('timeline-scroll');
+      const targetScroll = HEADER_HEIGHT + filteredRow * ROW_HEIGHT - container.clientHeight / 2 + ROW_HEIGHT / 2;
+      container.scrollTop = Math.max(0, targetScroll);
+    }
+  }
+
+  render();
+  highlightTableRow(idx, fromTable);
+}
+
+function highlightTableRow(idx, skipScroll) {
+  // Find filtered row position for scrolling
+  const filteredRow = filteredIndices ? filteredIndices.indexOf(idx) : idx;
+  if (filteredRow < 0) return;
+
+  const section = document.getElementById('table-section');
+  if (!skipScroll) {
+    const targetScroll = filteredRow * TABLE_ROW_HEIGHT - section.clientHeight / 2 + TABLE_ROW_HEIGHT / 2;
+    section.scrollTop = Math.max(0, targetScroll);
+  }
+  // Force re-render to pick up selectedIdx change
+  tableRenderedRange = { start: -1, end: -1 };
+  updateTableRows();
+  // Open fused ops detail if present
+  const fusedDiv = document.getElementById('fused-' + idx);
+  if (fusedDiv && !fusedDiv.classList.contains('open')) {
+    fusedDiv.classList.add('open');
+  }
+}
+
+/* ── Mouse events on canvas ── */
+let clickStartXPos = 0;
+
+canvas.addEventListener('mousemove', (evt) => {
+  if (isDragging) return;
+  const rect = canvas.getBoundingClientRect();
+  const container = document.getElementById('timeline-scroll');
+  const scrollTop = container.scrollTop || 0;
+  const y = evt.clientY - rect.top + scrollTop - HEADER_HEIGHT;
+  const row = Math.floor(y / ROW_HEIGHT);
+  const nc = visibleCount();
+  if (row >= 0 && row < nc) {
+    const idx = eventAt(row);
+    const e = events[idx];
+    ttName.textContent = '#' + e.op_index + ' ' + e.name;
+    let detail = 'Category: ' + e.category + ' | Duration: ' + formatDuration(e.duration_us) + ' | Start: ' + formatDuration(e.start_us);
+    if (e.is_sync) detail += ' | \u26a0 IMPLICIT GPU SYNC';
+    if (e.output_shape) detail += ' | Shape: ' + formatShape(e.output_shape);
+    if (e.memory_bytes) detail += ' | Memory: ' + formatBytes(e.memory_bytes);
+    if (e.fusion_kind) detail += ' | Fusion: ' + e.fusion_kind + ' (' + (e.num_fused_ops || '?') + ' ops fused)';
+    ttDetail.textContent = detail;
+    // Caller
+    if (e.caller) {
+      ttCaller.textContent = '\u279C ' + e.caller;
+      ttCaller.style.display = '';
+    } else {
+      ttCaller.textContent = '';
+      ttCaller.style.display = 'none';
+    }
+    // Data preview (fusion inputs/outputs or legacy data_preview)
+    const ttInputPreview = e.fusion_inputs && e.fusion_inputs.length > 0
+      ? e.fusion_inputs.map(fi => formatDataCompact(fi.data, 4)).join(' | ')
+      : null;
+    const ttOutputPreview = e.fusion_outputs && e.fusion_outputs.length > 0
+      ? e.fusion_outputs.map(fo => formatDataCompact(fo.data, 4)).join(' | ')
+      : (e.data_preview && e.data_preview.length > 0 ? formatDataCompact(e.data_preview, 6) : null);
+    const ttPreview = ttInputPreview && ttOutputPreview
+      ? 'In: ' + ttInputPreview + ' \u2192 Out: ' + ttOutputPreview
+      : ttOutputPreview || ttInputPreview;
+    if (ttPreview) {
+      ttData.textContent = ttPreview;
+      ttData.style.display = '';
+    } else {
+      ttData.textContent = '';
+      ttData.style.display = 'none';
+    }
+    if (e.fused_ops && e.fused_ops.length > 0) {
+      const maxShow = 8;
+      let opsHtml = '';
+      const ops = e.fused_ops.slice(0, maxShow);
+      for (const op of ops) {
+        const ins = op.input_shapes.map(formatShape).join(', ');
+        const outs = op.output_shapes.map(formatShape).join(', ');
+        opsHtml += '<div>' + op.name + ': ' + ins + ' \u2192 ' + outs + '</div>';
+      }
+      if (e.fused_ops.length > maxShow) opsHtml += '<div>... +' + (e.fused_ops.length - maxShow) + ' more</div>';
+      ttOps.innerHTML = opsHtml;
+    } else {
+      ttOps.innerHTML = '';
+    }
+    tooltip.style.display = 'block';
+    tooltip.style.left = Math.min(evt.clientX + 12, window.innerWidth - 420) + 'px';
+    tooltip.style.top = (evt.clientY + 12) + 'px';
+  } else {
+    tooltip.style.display = 'none';
+    ttOps.innerHTML = '';
+    ttCaller.textContent = '';
+    ttData.textContent = '';
+  }
+});
+
+canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+canvas.addEventListener('mousedown', (evt) => {
+  if (evt.button === 1) evt.preventDefault(); // prevent autoscroll on middle click
+  isDragging = true;
+  dragStartX = evt.clientX;
+  dragStartPan = panX;
+  clickStartXPos = evt.clientX;
+});
+
+window.addEventListener('mousemove', (evt) => {
+  if (!isDragging) return;
+  const container = document.getElementById('timeline-scroll');
+  const barAreaWidth = container.clientWidth - LABEL_WIDTH - 10;
+  const dx = evt.clientX - dragStartX;
+  panX = dragStartPan - dx / barAreaWidth;
+  render();
+  renderMemoryChart();
+});
+window.addEventListener('mouseup', (evt) => {
+  isDragging = false;
+});
+
+canvas.addEventListener('click', (evt) => {
+  if (Math.abs(evt.clientX - clickStartXPos) > 5) return;
+  const rect = canvas.getBoundingClientRect();
+  const container = document.getElementById('timeline-scroll');
+  const scrollTop = container.scrollTop || 0;
+  const y = evt.clientY - rect.top + scrollTop - HEADER_HEIGHT;
+  const row = Math.floor(y / ROW_HEIGHT);
+  const nc = visibleCount();
+  if (row >= 0 && row < nc) {
+    selectEvent(eventAt(row));
+  }
+});
+
+// Zoom toward a specific pixel X (keeps the time under the cursor fixed)
+function zoomAtPixel(pixelX, factor) {
+  const container = document.getElementById('timeline-scroll');
+  const width = container.clientWidth;
+  const barAreaLeft = LABEL_WIDTH;
+  const barAreaWidth = width - LABEL_WIDTH - 10;
+  const range = getTimeRange();
+  const oldTimeSpan = (range.max - range.min) / zoom;
+  // Time value under the cursor before zoom
+  const frac = (pixelX - barAreaLeft) / barAreaWidth + panX;
+  const tCursor = frac * oldTimeSpan + range.min;
+
+  const oldZoom = zoom;
+  zoom *= factor;
+  zoom = Math.max(0.1, Math.min(zoom, 1000));
+
+  const newTimeSpan = (range.max - range.min) / zoom;
+  // Adjust panX so tCursor stays at the same pixel
+  panX = (tCursor - range.min) / newTimeSpan - (pixelX - barAreaLeft) / barAreaWidth;
+}
+
+canvas.addEventListener('wheel', (evt) => {
+  // Ctrl+wheel = zoom, plain wheel = vertical scroll (default)
+  if (!evt.ctrlKey) return;
+  evt.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const pixelX = evt.clientX - rect.left;
+  const factor = evt.deltaY < 0 ? 1.2 : 1 / 1.2;
+  zoomAtPixel(pixelX, factor);
+  render();
+  renderMemoryChart();
+});
+
+function zoomIn() {
+  const container = document.getElementById('timeline-scroll');
+  const centerX = LABEL_WIDTH + (container.clientWidth - LABEL_WIDTH - 10) / 2;
+  zoomAtPixel(centerX, 1.5);
+  render(); renderMemoryChart();
+}
+function zoomOut() {
+  const container = document.getElementById('timeline-scroll');
+  const centerX = LABEL_WIDTH + (container.clientWidth - LABEL_WIDTH - 10) / 2;
+  zoomAtPixel(centerX, 1 / 1.5);
+  render(); renderMemoryChart();
+}
+function resetZoom() { zoom = 1; panX = 0; render(); renderMemoryChart(); }
+
+// Re-render on scroll (virtualized — only draws visible rows)
+document.getElementById('timeline-scroll').addEventListener('scroll', () => {
+  render();
+});
+
+/* ── Memory chart (coupled with timeline zoom/pan) ── */
+let memHoverIdx = -1;
+function renderMemoryChart() {
+  const memCanvas = document.getElementById('mem-canvas');
+  const mctx = memCanvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const container = document.getElementById('mem-wrap');
+  const width = container.clientWidth || 400;
+  const height = 120;
+
+  memCanvas.width = width * dpr;
+  memCanvas.height = height * dpr;
+  memCanvas.style.width = width + 'px';
+  memCanvas.style.height = height + 'px';
+  mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  mctx.fillStyle = '#141414';
+  mctx.fillRect(0, 0, width, height);
+
+  const points = memPoints;
+  if (points.length === 0) {
+    mctx.fillStyle = '#555';
+    mctx.font = '12px "Segoe UI", system-ui, sans-serif';
+    mctx.fillText('No memory allocation data recorded', width / 2 - 120, height / 2);
+    return;
+  }
+
+  const range = getTimeRange();
+  const timeSpan = (range.max - range.min) / zoom;
+  const maxMem = memMaxMem;
+
+  const barAreaLeft = LABEL_WIDTH;
+  const barAreaWidth = width - LABEL_WIDTH - 10;
+  const topPad = 10;
+  const bottomPad = 15;
+  const chartH = height - topPad - bottomPad;
+
+  // Visible time window
+  const viewTimeStart = range.min + panX * timeSpan;
+  const viewTimeEnd = viewTimeStart + timeSpan;
+
+  const timeToX = (t) => barAreaLeft + ((t - range.min) / timeSpan - panX) * barAreaWidth;
+  const memToY = (m) => topPad + chartH - (m / maxMem) * chartH;
+
+  // Find visible point range using binary search
+  let lo = 0, hi = points.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (points[mid].time < viewTimeStart) lo = mid + 1; else hi = mid; }
+  const visStart = Math.max(0, lo - 1); // include one before for step continuity
+  lo = 0; hi = points.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (points[mid].time <= viewTimeEnd) lo = mid + 1; else hi = mid; }
+  const visEnd = Math.min(points.length - 1, lo);
+
+  // Clip to chart area
+  mctx.save();
+
+  // Y axis labels
+  mctx.fillStyle = '#666';
+  mctx.font = '9px monospace';
+  for (let i = 0; i <= 3; i++) {
+    const val = maxMem * (1 - i / 3);
+    const y = topPad + (i / 3) * chartH;
+    mctx.fillText(formatBytes(val), 4, y + 3);
+    mctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    mctx.beginPath();
+    mctx.moveTo(barAreaLeft, y);
+    mctx.lineTo(barAreaLeft + barAreaWidth, y);
+    mctx.stroke();
+  }
+
+  // Clip to bar area for chart
+  mctx.beginPath();
+  mctx.rect(barAreaLeft, 0, barAreaWidth, height);
+  mctx.clip();
+
+  // Step function: area fill (only visible segment)
+  mctx.beginPath();
+  const prevMem = visStart > 0 ? points[visStart].mem : 0;
+  const clipStartX = timeToX(viewTimeStart);
+  mctx.moveTo(clipStartX, topPad + chartH);
+  mctx.lineTo(clipStartX, memToY(visStart > 0 ? points[visStart].mem : 0));
+  for (let i = visStart; i <= visEnd; i++) {
+    const x = timeToX(points[i].time);
+    const y = memToY(points[i].mem);
+    const prevY = i > 0 ? memToY(points[i - 1].mem) : memToY(0);
+    mctx.lineTo(x, prevY);
+    mctx.lineTo(x, y);
+  }
+  const clipEndX = timeToX(viewTimeEnd);
+  mctx.lineTo(clipEndX, memToY(points[Math.min(visEnd, points.length - 1)].mem));
+  mctx.lineTo(clipEndX, topPad + chartH);
+  mctx.closePath();
+  const grad = mctx.createLinearGradient(0, topPad, 0, topPad + chartH);
+  grad.addColorStop(0, 'rgba(52, 168, 83, 0.3)');
+  grad.addColorStop(1, 'rgba(52, 168, 83, 0.02)');
+  mctx.fillStyle = grad;
+  mctx.fill();
+
+  // Step function: solid green line (only visible)
+  mctx.beginPath();
+  mctx.moveTo(clipStartX, memToY(visStart > 0 ? points[visStart].mem : 0));
+  for (let i = visStart; i <= visEnd; i++) {
+    const x = timeToX(points[i].time);
+    const y = memToY(points[i].mem);
+    const prevY = i > 0 ? memToY(points[i - 1].mem) : memToY(0);
+    mctx.lineTo(x, prevY);
+    mctx.lineTo(x, y);
+  }
+  mctx.lineTo(clipEndX, memToY(points[Math.min(visEnd, points.length - 1)].mem));
+  mctx.strokeStyle = '#34a853';
+  mctx.lineWidth = 1.5;
+  mctx.stroke();
+
+  // Duration bars for allocation events (only visible)
+  for (let i = visStart; i <= visEnd; i++) {
+    const p = points[i];
+    if (p.bytes > 0) {
+      const x1 = timeToX(p.time);
+      const x2 = timeToX(p.endTime);
+      const y = memToY(p.mem);
+      const barW = Math.max(x2 - x1, 3);
+      const isHovered = (i === memHoverIdx);
+      mctx.fillStyle = isHovered ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 109, 1, 0.4)';
+      mctx.fillRect(x1, y - 3, barW, 6);
+      mctx.fillStyle = isHovered ? '#fff' : '#ff6d01';
+      mctx.fillRect(x1, y - 4, 1.5, 8);
+      mctx.fillRect(x1 + barW - 1.5, y - 4, 1.5, 8);
+    }
+  }
+
+  mctx.restore();
+
+  // Store for tooltip
+  memCanvas._chartH = chartH;
+  memCanvas._topPad = topPad;
+}
+
+// Memory chart tooltip — binary search for nearest visible point
+const memCanvas = document.getElementById('mem-canvas');
+
+memCanvas.addEventListener('mousemove', (evt) => {
+  if (isDragging) return;
+  const rect = memCanvas.getBoundingClientRect();
+  const mx = evt.clientX - rect.left;
+  const my = evt.clientY - rect.top;
+  const points = memPoints;
+  if (points.length === 0) return;
+
+  const range = getTimeRange();
+  const timeSpan = (range.max - range.min) / zoom;
+  const barAreaLeft = LABEL_WIDTH;
+  const barAreaWidth = rect.width - LABEL_WIDTH - 10;
+  const timeToX = (t) => barAreaLeft + ((t - range.min) / timeSpan - panX) * barAreaWidth;
+  const topPad = memCanvas._topPad || 10;
+  const chartH = memCanvas._chartH || 95;
+  const maxMem = memMaxMem;
+  const memToY = (m) => topPad + chartH - (m / maxMem) * chartH;
+
+  // Convert mouse X to time, then binary search for nearby points
+  const mouseTime = range.min + ((mx - barAreaLeft) / barAreaWidth + panX) * timeSpan;
+  let lo = 0, hi = points.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (points[mid].time < mouseTime) lo = mid + 1; else hi = mid; }
+
+  // Check a small window around the insertion point
+  let bestDist = Infinity, bestIdx = -1;
+  const searchStart = Math.max(0, lo - 5);
+  const searchEnd = Math.min(points.length - 1, lo + 5);
+  for (let i = searchStart; i <= searchEnd; i++) {
+    if (points[i].bytes <= 0) continue;
+    const px = timeToX(points[i].time);
+    const py = memToY(points[i].mem);
+    const d = Math.sqrt((px - mx) ** 2 + (py - my) ** 2);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+
+  if (bestIdx >= 0 && bestDist < 40) {
+    if (memHoverIdx !== bestIdx) {
+      memHoverIdx = bestIdx;
+      renderMemoryChart();
+    }
+    const p = points[bestIdx];
+    ttName.textContent = '#' + p.opIndex + ' ' + p.name;
+    let detail = 'Cumulative: ' + formatBytes(p.mem) + ' | Alloc: +' + formatBytes(p.bytes);
+    detail += ' | Duration: ' + formatDuration(p.endTime - p.time);
+    detail += ' | Category: ' + p.category;
+    if (p.shape) detail += ' | Shape: ' + formatShape(p.shape);
+    ttDetail.textContent = detail;
+    ttOps.innerHTML = '';
+    tooltip.style.display = 'block';
+    tooltip.style.left = Math.min(evt.clientX + 12, window.innerWidth - 350) + 'px';
+    tooltip.style.top = (evt.clientY - 60) + 'px';
+  } else {
+    if (memHoverIdx !== -1) {
+      memHoverIdx = -1;
+      renderMemoryChart();
+    }
+    tooltip.style.display = 'none';
+  }
+});
+memCanvas.addEventListener('mouseleave', () => {
+  tooltip.style.display = 'none';
+  if (memHoverIdx !== -1) { memHoverIdx = -1; renderMemoryChart(); }
+});
+
+// Memory chart pan (coupled with timeline)
+memCanvas.addEventListener('mousedown', (evt) => {
+  if (evt.button === 1) evt.preventDefault();
+  isDragging = true;
+  dragStartX = evt.clientX;
+  dragStartPan = panX;
+  clickStartXPos = evt.clientX;
+});
+memCanvas.addEventListener('wheel', (evt) => {
+  if (!evt.ctrlKey) return;
+  evt.preventDefault();
+  const rect = memCanvas.getBoundingClientRect();
+  const pixelX = evt.clientX - rect.left;
+  const factor = evt.deltaY < 0 ? 1.2 : 1 / 1.2;
+  zoomAtPixel(pixelX, factor);
+  render();
+  renderMemoryChart();
+});
+
+/* ── Toggle memory section ── */
+function toggleMemory() {
+  const wrap = document.getElementById('mem-wrap');
+  const arrow = document.getElementById('mem-arrow');
+  wrap.classList.toggle('collapsed');
+  arrow.classList.toggle('open');
+}
+
+/* ── Fullscreen toggle ── */
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement) {
+    el.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen();
+  }
+}
+
+/* ── Table rendering (virtualized via padding) ── */
+const TABLE_ROW_HEIGHT = 28;
+const TABLE_VISIBLE_BUFFER = 20;
+let tableRenderedRange = { start: -1, end: -1 };
+
+function renderTable() {
+  const section = document.getElementById('table-section');
+  const container = document.getElementById('op-table');
+
+  container.innerHTML =
+    '<table><thead><tr><th>#</th><th>Operation</th><th>Category</th><th>Shape</th><th>Duration</th><th>Memory</th><th>Details</th></tr></thead>' +
+    '<tbody id="vtable-body"></tbody></table>';
+
+  tableRenderedRange = { start: -1, end: -1 };
+  updateTableRows();
+
+  section.addEventListener('scroll', updateTableRows);
+}
+
+function updateTableRows() {
+  const section = document.getElementById('table-section');
+  const tbody = document.getElementById('vtable-body');
+  if (!tbody) return;
+
+  const nc = visibleCount();
+  const scrollTop = section.scrollTop;
+  const viewH = section.clientHeight;
+
+  const first = Math.max(0, Math.floor(scrollTop / TABLE_ROW_HEIGHT) - TABLE_VISIBLE_BUFFER);
+  const last = Math.min(nc - 1, Math.ceil((scrollTop + viewH) / TABLE_ROW_HEIGHT) + TABLE_VISIBLE_BUFFER);
+
+  if (first === tableRenderedRange.start && last === tableRenderedRange.end) return;
+  tableRenderedRange = { start: first, end: last };
+
+  const totalH = nc * TABLE_ROW_HEIGHT;
+  const topPad = first * TABLE_ROW_HEIGHT;
+  const bottomPad = Math.max(0, totalH - (last + 1) * TABLE_ROW_HEIGHT);
+
+  let html = '';
+  // Top spacer row
+  if (topPad > 0) html += '<tr style="height:' + topPad + 'px"><td colspan="7"></td></tr>';
+
+  for (let row = first; row <= last; row++) {
+    const i = eventAt(row);
+    const e = events[i];
+    const isSync = e.category === 'sync';
+    const isFusion = e.category === 'fusion';
+    const isImplicitSync = !!e.is_sync;
+    const isFusionFallback = !!e.is_fusion_fallback;
+    let classes = [];
+    if (isSync) classes.push('sync-row');
+    else if (isImplicitSync) classes.push('implicit-sync-row');
+    else if (isFusion) classes.push('fusion-row');
+    else if (isFusionFallback) classes.push('fusion-row');
+    else if (e.category === 'marker') classes.push('marker-row');
+    if (i === selectedIdx) classes.push('selected-row');
+    const clsAttr = classes.length ? ' class="' + classes.join(' ') + '"' : '';
+    const memCell = e.memory_bytes ? formatBytes(e.memory_bytes) : '-';
+    const shapeCell = e.output_shape ? '<span class="shape-tag">' + formatShape(e.output_shape) + '</span>' : '-';
+    let detail = '';
+    if (isSync) {
+      detail = '<span style="color:#ff4444">SYNC POINT</span>';
+    } else if (isFusion) {
+      const hasFusedOps = e.fused_ops && e.fused_ops.length > 0;
+      const toggleId = 'fused-' + i;
+      detail = '<span class="fusion-badge">' + (e.fusion_kind || 'unknown') + '</span> ' + (e.num_fused_ops || '?') + ' ops fused';
+      if (hasFusedOps) {
+        detail += ' <span class="fusion-toggle" onclick="event.stopPropagation(); document.getElementById(\'' + toggleId + '\').classList.toggle(\'open\')">[show]</span>';
+        detail += '<div class="fused-ops" id="' + toggleId + '"><table><thead><tr><th>#</th><th>Operation</th><th>Inputs</th><th>Outputs</th></tr></thead><tbody>';
+        for (let j = 0; j < e.fused_ops.length; j++) {
+          const op = e.fused_ops[j];
+          const inputs = op.input_shapes.map(function(s) { return '<span class="shape-tag">' + formatShape(s) + '</span>'; }).join(' ');
+          const outputs = op.output_shapes.map(function(s) { return '<span class="shape-tag">' + formatShape(s) + '</span>'; }).join(' ');
+          detail += '<tr><td>' + (j + 1) + '</td><td>' + op.name + '</td><td>' + inputs + '</td><td>' + outputs + '</td></tr>';
+        }
+        detail += '</tbody></table></div>';
+      }
+    } else if (e.category === 'marker') {
+      const kind = e.is_span ? 'SPAN' : 'MARKER';
+      detail = '<span style="background:#00838f;color:white;padding:1px 6px;border-radius:8px;font-size:10px">' + kind + '</span>';
+      if (e.debug_data) {
+        const short = e.debug_data.length > 60 ? e.debug_data.substring(0, 59) + '\u2026' : e.debug_data;
+        detail += ' <span style="color:#80deea;font-size:10px;font-family:monospace">' + short.replace(/</g, '&lt;') + '</span>';
+      }
+    }
+    // Fusion fallback badge
+    if (isFusionFallback) {
+      detail = '<span style="background:#e65100;color:white;padding:1px 6px;border-radius:8px;font-size:10px" title="This op was part of a fusion pattern but could not be included in the fused kernel — it ran as a separate kernel launch">\u26a0 FUSION FALLBACK</span>'
+        + (detail ? ' ' + detail : '');
+    }
+    // Implicit sync badge
+    if (isImplicitSync) {
+      detail = '<span class="sync-warn" title="Implicit GPU sync — flushes fusion queue and blocks on GPU readback">\u26a0</span> '
+        + '<span style="color:#ff4444;font-size:10px;font-weight:bold">GPU SYNC</span>'
+        + (detail ? ' ' + detail : '');
+    }
+    // Caller badge
+    if (e.caller) {
+      const shortCaller = e.caller.length > 40 ? '\u2026' + e.caller.slice(-39) : e.caller;
+      detail += (detail ? ' ' : '') + '<span style="color:#80cbc4;font-size:10px;font-family:monospace" title="' + e.caller.replace(/"/g, '&quot;') + '">' + shortCaller + '</span>';
+    }
+    // Data preview badge
+    const badgeInputPreview = e.fusion_inputs && e.fusion_inputs.length > 0
+      ? formatDataCompact(e.fusion_inputs[0].data, 4) : null;
+    const badgeOutputPreview = e.fusion_outputs && e.fusion_outputs.length > 0
+      ? formatDataCompact(e.fusion_outputs[0].data, 4)
+      : (e.data_preview && e.data_preview.length > 0 ? formatDataCompact(e.data_preview, 4) : null);
+    if (badgeInputPreview) {
+      detail += (detail ? ' ' : '') + '<span style="color:#90caf9;font-size:10px;font-family:monospace">' + badgeInputPreview + '</span>';
+    }
+    if (badgeInputPreview && badgeOutputPreview) {
+      detail += '<span style="color:#666;font-size:10px"> \u2192 </span>';
+    }
+    if (badgeOutputPreview) {
+      detail += (detail && !badgeInputPreview ? ' ' : '') + '<span style="color:#a5d6a7;font-size:10px;font-family:monospace">' + badgeOutputPreview + '</span>';
+    }
+    html += '<tr' + clsAttr + ' data-idx="' + i + '" style="cursor:pointer;height:' + TABLE_ROW_HEIGHT + 'px" onclick="selectEvent(' + i + ', true)">';
+    const nameHtml = isImplicitSync
+      ? '<span style="color:#ff9800;font-weight:bold">' + e.name + '</span>'
+      : isFusionFallback
+      ? '<span style="color:#ff9800">' + e.name + '</span>'
+      : e.name;
+    html += '<td>' + e.op_index + '</td><td>' + nameHtml + '</td><td><span style="color:' + (CAT_COLORS[e.category] || '#7baaf7') + '">' + e.category + '</span></td>';
+    html += '<td>' + shapeCell + '</td><td>' + formatDuration(e.duration_us) + '</td><td>' + memCell + '</td><td>' + detail + '</td></tr>';
+  }
+
+  // Bottom spacer row
+  if (bottomPad > 0) html += '<tr style="height:' + bottomPad + 'px"><td colspan="7"></td></tr>';
+
+  tbody.innerHTML = html;
+}
+
+/* ── Resizable panels ── */
+(function() {
+  const sidebar = document.getElementById('sidebar');
+  const inspector = document.getElementById('inspector');
+  const tableSection = document.getElementById('table-section');
+  const resizeLeft = document.getElementById('resize-left');
+  const resizeRight = document.getElementById('resize-right');
+  const resizeTable = document.getElementById('resize-table');
+  let resizeTarget = null;
+  let resizeStartX = 0;
+  let resizeStartY = 0;
+  let resizeStartW = 0;
+  let resizeStartH = 0;
+
+  resizeLeft.addEventListener('mousedown', (evt) => {
+    evt.preventDefault();
+    resizeTarget = 'left';
+    resizeStartX = evt.clientX;
+    resizeStartW = sidebar.offsetWidth;
+    resizeLeft.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  resizeRight.addEventListener('mousedown', (evt) => {
+    evt.preventDefault();
+    resizeTarget = 'right';
+    resizeStartX = evt.clientX;
+    resizeStartW = inspector.offsetWidth;
+    resizeRight.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  resizeTable.addEventListener('mousedown', (evt) => {
+    evt.preventDefault();
+    resizeTarget = 'table';
+    resizeStartY = evt.clientY;
+    resizeStartH = tableSection.offsetHeight;
+    resizeTable.classList.add('active');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  window.addEventListener('mousemove', (evt) => {
+    if (!resizeTarget) return;
+    if (resizeTarget === 'left') {
+      const dx = evt.clientX - resizeStartX;
+      const newW = Math.max(140, Math.min(resizeStartW + dx, 500));
+      sidebar.style.width = newW + 'px';
+    } else if (resizeTarget === 'right') {
+      const dx = resizeStartX - evt.clientX;
+      const newW = Math.max(200, Math.min(resizeStartW + dx, 600));
+      inspector.style.width = newW + 'px';
+    } else if (resizeTarget === 'table') {
+      // Dragging up = increasing table height
+      const dy = resizeStartY - evt.clientY;
+      const newH = Math.max(60, Math.min(resizeStartH + dy, window.innerHeight * 0.8));
+      tableSection.style.height = newH + 'px';
+    }
+    render();
+    renderMemoryChart();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (resizeTarget) {
+      resizeLeft.classList.remove('active');
+      resizeRight.classList.remove('active');
+      resizeTable.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      resizeTarget = null;
+      render();
+      renderMemoryChart();
+    }
+  });
+})();
+
+/* ── Recompute derived state from events array ── */
+function recomputeState() {
+  analysis = analyze(events);
+  TOTAL_TIME_US = analysis.totalDurationUs;
+
+  opNamesByCategory = {};
+  opNameCounts = {};
+  implicitSyncOps = new Set();
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    const displayName = e.category === 'fusion' ? 'fusion::' + (e.fusion_kind || 'unknown')
+      : e.category === 'sync' ? 'sync' : e.name;
+    if (!opNameCounts[displayName]) opNameCounts[displayName] = 0;
+    opNameCounts[displayName]++;
+    const filterCategory = e.is_sync ? 'sync' : e.category;
+    if (e.is_sync) implicitSyncOps.add(displayName);
+    if (!opNamesByCategory[filterCategory]) opNamesByCategory[filterCategory] = new Set();
+    opNamesByCategory[filterCategory].add(displayName);
+  }
+
+  hiddenOps.clear();
+  filteredIndices = [];
+  rebuildFilteredIndices();
+
+  syncIndices = [];
+  implicitSyncIndices = [];
+  markerIndices = [];
+  for (let i = 0; i < events.length; i++) {
+    if (events[i].category === 'sync') syncIndices.push(i);
+    if (events[i].is_sync) implicitSyncIndices.push(i);
+    if (events[i].category === 'marker') markerIndices.push(i);
+  }
+
+  cachedTimeRange = (function() {
+    if (events.length === 0) return { min: 0, max: 1 };
+    let min = events[0].start_us;
+    let max = events[0].start_us + events[0].duration_us;
+    for (let i = 1; i < events.length; i++) {
+      const e = events[i];
+      if (e.start_us < min) min = e.start_us;
+      const end = e.start_us + e.duration_us;
+      if (end > max) max = end;
+    }
+    return { min, max: max + (max - min) * 0.02 };
+  })();
+
+  memPoints = (function() {
+    let cumulative = 0;
+    const pts = [];
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      if (!e.memory_bytes) continue;
+      cumulative += e.memory_bytes;
+      pts.push({ time: e.start_us, endTime: e.start_us + e.duration_us, mem: cumulative, name: e.name, bytes: e.memory_bytes, category: e.category, opIndex: e.op_index, shape: e.output_shape });
+    }
+    return pts;
+  })();
+  memMaxMem = (function() {
+    let m = 1;
+    for (let i = 0; i < memPoints.length; i++) {
+      if (memPoints[i].mem > m) m = memPoints[i].mem;
+    }
+    return m;
+  })();
+
+  selectedIdx = -1;
+  tableRenderedRange = { start: -1, end: -1 };
+}
+
+/* ── Init ── */
+function initApp() {
+  recomputeState();
+  populateSidebar();
+  populateFilters();
+  render();
+  renderMemoryChart();
+  renderTable();
+}
+
+window.addEventListener('resize', () => { render(); renderMemoryChart(); });
+
+/* ── Drop zone logic ── */
+(function() {
+  const overlay = document.getElementById('drop-zone-overlay');
+  const appLayout = document.getElementById('app-layout');
+  const box = document.getElementById('drop-zone-box');
+  const btn = document.getElementById('drop-zone-btn');
+  const fileInput = document.getElementById('drop-zone-input');
+  const errorEl = document.getElementById('drop-zone-error');
+
+  function showDropZone() {
+    overlay.classList.remove('hidden');
+    appLayout.style.display = 'none';
+  }
+
+  function hideDropZone() {
+    overlay.classList.add('hidden');
+    appLayout.style.display = '';
+  }
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+  }
+
+  function loadFileContent(text, fileName) {
+    errorEl.style.display = 'none';
+    try {
+      // The file defines TRACE_DATA (via const/let/var).
+      // Replace const/let with var so it's visible after eval in function scope.
+      const patched = text.replace(/^(const|let)\s+TRACE_DATA\b/m, 'var TRACE_DATA');
+      const fn = new Function(patched + '\nreturn (typeof TRACE_DATA !== "undefined") ? TRACE_DATA : null;');
+      const data = fn();
+      if (!data || !Array.isArray(data)) {
+        showError('File does not contain a valid TRACE_DATA array.');
+        return;
+      }
+      events = data;
+      hideDropZone();
+      initApp();
+    } catch (e) {
+      showError('Failed to parse trace file: ' + e.message);
+    }
+  }
+
+  function handleFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => loadFileContent(reader.result, file.name);
+    reader.onerror = () => showError('Failed to read file.');
+    reader.readAsText(file);
+  }
+
+  // Click to browse
+  btn.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
+  box.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+  // Drag & drop on the box
+  box.addEventListener('dragover', (e) => { e.preventDefault(); box.classList.add('drag-over'); });
+  box.addEventListener('dragleave', () => box.classList.remove('drag-over'));
+  box.addEventListener('drop', (e) => {
+    e.preventDefault();
+    box.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  // Also support drag & drop anywhere on the page (when app is visible) to reload
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => {
+    // Only handle if not already handled by the drop-zone box
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  // Decide initial state
+  if (events.length === 0) {
+    showDropZone();
+  } else {
+    hideDropZone();
+    initApp();
+  }
+})();
+</script>
+</body>
+</html>
