@@ -18,15 +18,8 @@ import json
 def load_trace(path: str) -> list[dict]:
     """Load trace_data.js into a list of event dicts."""
     text = open(path).read()
-    start = text.index('[')
-    # Find matching closing bracket
-    depth = 0
-    for i, ch in enumerate(text[start:], start):
-        if ch == '[': depth += 1
-        elif ch == ']': depth -= 1
-        if depth == 0:
-            return json.loads(text[start:i+1])
-    raise ValueError("Malformed trace file")
+    # File format is: const TRACE_DATA = [...];\n
+    return json.loads(text[len("const TRACE_DATA = "):].strip().rstrip(";"))
 
 events = load_trace("trace_data.js")
 ```
