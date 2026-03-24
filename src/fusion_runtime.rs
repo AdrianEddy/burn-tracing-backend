@@ -26,7 +26,7 @@ use burn_ir::{OperationIr, TensorId};
 use core::marker::PhantomData;
 use std::collections::{HashMap, HashSet};
 
-use crate::trace::{FusedOpInfo, FusionKind, FusionOutputData, record_fusion_execute};
+use crate::trace::{FusedOpInfo, FusionKind, FusionTensorData, record_fusion_execute};
 
 // ---------------------------------------------------------------------------
 // OperationIr → FusedOpInfo extraction
@@ -404,7 +404,7 @@ fn shape_from_strides(strides: &[usize], total_elems: usize) -> Vec<usize> {
 #[cfg(feature = "trace-data")]
 fn capture_fusion_handles<R: CubeRuntime>(
     handles: &[(TensorId, CubeFusionHandle<R>)],
-) -> Vec<FusionOutputData> {
+) -> Vec<FusionTensorData> {
     use burn_backend::TensorData;
 
     let limit = crate::trace::data_capture_limit();
@@ -434,7 +434,7 @@ fn capture_fusion_handles<R: CubeRuntime>(
         );
         let preview: Vec<f64> = data.iter::<f64>().take(limit).collect();
 
-        result.push(FusionOutputData {
+        result.push(FusionTensorData {
             shape,
             dtype: format!("{:?}", dtype),
             data: preview,
@@ -448,6 +448,6 @@ fn capture_fusion_handles<R: CubeRuntime>(
 #[cfg(not(feature = "trace-data"))]
 fn capture_fusion_handles<R: CubeRuntime>(
     _handles: &[(TensorId, CubeFusionHandle<R>)],
-) -> Vec<FusionOutputData> {
+) -> Vec<FusionTensorData> {
     Vec::new()
 }

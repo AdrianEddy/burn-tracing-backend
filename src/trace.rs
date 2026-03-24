@@ -88,7 +88,7 @@ pub struct FusedOpInfo {
 
 /// Data captured from one input or output tensor of a fusion block.
 #[derive(Debug, Clone, Serialize)]
-pub struct FusionOutputData {
+pub struct FusionTensorData {
     /// Shape of this tensor (reconstructed from strides).
     pub shape: Vec<usize>,
     /// Element type name (e.g. "F32", "Bool(U32)").
@@ -142,10 +142,10 @@ pub struct TraceEvent {
     pub data_shape: Option<Vec<usize>>,
     /// All input tensors of a fusion block with their shapes and data previews.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fusion_inputs: Option<Vec<FusionOutputData>>,
+    pub fusion_inputs: Option<Vec<FusionTensorData>>,
     /// All output tensors of a fusion block with their shapes and data previews.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fusion_outputs: Option<Vec<FusionOutputData>>,
+    pub fusion_outputs: Option<Vec<FusionTensorData>>,
     /// Whether this is a span (has duration) or an instant marker.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_span: Option<bool>,
@@ -240,7 +240,7 @@ impl TraceCollector {
         }
     }
 
-    pub fn record_fusion(&mut self, kind: FusionKind, num_fused_ops: usize, fused_ops: Vec<FusedOpInfo>, start: Instant, duration: Duration, caller: Option<String>, fusion_inputs: Vec<FusionOutputData>, fusion_outputs: Vec<FusionOutputData>, kernel_sources: Vec<String>) {
+    pub fn record_fusion(&mut self, kind: FusionKind, num_fused_ops: usize, fused_ops: Vec<FusedOpInfo>, start: Instant, duration: Duration, caller: Option<String>, fusion_inputs: Vec<FusionTensorData>, fusion_outputs: Vec<FusionTensorData>, kernel_sources: Vec<String>) {
         let epoch = self.ensure_epoch();
         let start_us = start.duration_since(epoch).as_nanos() as f64 / 1000.0;
         let duration_us = duration.as_nanos() as f64 / 1000.0;
@@ -291,7 +291,7 @@ impl TraceCollector {
         is_span: bool,
         debug_data: Option<String>,
         binary_data: Option<Vec<u8>>,
-        tensors: Vec<FusionOutputData>,
+        tensors: Vec<FusionTensorData>,
         caller: Option<String>,
     ) {
         let epoch = self.ensure_epoch();
@@ -466,7 +466,7 @@ fn deduplicate_fused_ops(events: &[TraceEvent]) -> Vec<TraceEvent> {
 
         // First pass: identify standalone events and merge their data into
         // the parent fusion event's fusion_outputs (with tensor_id).
-        let mut merge_data: std::collections::HashMap<usize, Vec<FusionOutputData>> =
+        let mut merge_data: std::collections::HashMap<usize, Vec<FusionTensorData>> =
             std::collections::HashMap::new();
         {
             let mut counts_tmp = merge_counts.clone();
@@ -492,7 +492,7 @@ fn deduplicate_fused_ops(events: &[TraceEvent]) -> Vec<TraceEvent> {
                                                 .and_then(|m| m.get_mut(&key))
                                                 .and_then(|ids| ids.pop_front())
                                                 .flatten();
-                                            merge_data.entry(fi).or_default().push(FusionOutputData {
+                                            merge_data.entry(fi).or_default().push(FusionTensorData {
                                                 shape: shape.clone(),
                                                 dtype: String::new(),
                                                 data: preview.clone(),
@@ -1029,7 +1029,7 @@ pub(crate) fn record_op_full(
 
 /// Record a fusion optimization execution.
 #[cfg(feature = "fusion")]
-pub(crate) fn record_fusion_execute(kind: FusionKind, num_fused_ops: usize, fused_ops: Vec<FusedOpInfo>, start: Instant, duration: Duration, caller: Option<String>, fusion_inputs: Vec<FusionOutputData>, fusion_outputs: Vec<FusionOutputData>, kernel_sources: Vec<String>) {
+pub(crate) fn record_fusion_execute(kind: FusionKind, num_fused_ops: usize, fused_ops: Vec<FusedOpInfo>, start: Instant, duration: Duration, caller: Option<String>, fusion_inputs: Vec<FusionTensorData>, fusion_outputs: Vec<FusionTensorData>, kernel_sources: Vec<String>) {
     with_tracer(|t| t.record_fusion(kind, num_fused_ops, fused_ops, start, duration, caller, fusion_inputs, fusion_outputs, kernel_sources));
 }
 
@@ -1162,8 +1162,6 @@ pub(crate) fn data_capture_limit() -> usize {
 }
 
 /// A minimal `block_on` that resolves a future synchronously using a condvar waker.
-/// Used only by the `trace-data` feature to read tensor data after sync.
-#[cfg(feature = "trace-data")]
 fn block_on_future<F: std::future::Future>(f: F) -> F::Output {
     use std::pin::pin;
     use std::sync::{Arc, Condvar, Mutex as StdMutex};
@@ -1197,7 +1195,6 @@ fn block_on_future<F: std::future::Future>(f: F) -> F::Output {
 }
 
 /// Convert `TensorData` to a `Vec<f64>`, taking at most `limit` values.
-#[cfg(feature = "trace-data")]
 fn extract_preview(data: &burn_backend::TensorData, limit: usize) -> Vec<f64> {
     data.iter::<f64>().take(limit).collect()
 }
@@ -1294,6 +1291,45 @@ pub(crate) fn maybe_capture_quantized_data<B: burn_backend::Backend>(
     }
 }
 
+/// Unconditionally capture data from a float tensor (syncs the device).
+/// `limit`: `Some(n)` captures at most `n` values, `None` captures all.
+fn force_capture_float_data<B: burn_backend::Backend>(
+    tensor: &burn_backend::tensor::FloatTensor<B>,
+    limit: Option<usize>,
+) -> Option<Vec<f64>> {
+    let device = B::float_device(tensor);
+    let _ = B::sync(&device);
+    block_on_future(B::float_into_data(tensor.clone()))
+        .ok()
+        .map(|data| extract_preview(&data, limit.unwrap_or(usize::MAX)))
+}
+
+/// Unconditionally capture data from an int tensor (syncs the device).
+/// `limit`: `Some(n)` captures at most `n` values, `None` captures all.
+fn force_capture_int_data<B: burn_backend::Backend>(
+    tensor: &burn_backend::tensor::IntTensor<B>,
+    limit: Option<usize>,
+) -> Option<Vec<f64>> {
+    let device = B::int_device(tensor);
+    let _ = B::sync(&device);
+    block_on_future(B::int_into_data(tensor.clone()))
+        .ok()
+        .map(|data| extract_preview(&data, limit.unwrap_or(usize::MAX)))
+}
+
+/// Unconditionally capture data from a bool tensor (syncs the device).
+/// `limit`: `Some(n)` captures at most `n` values, `None` captures all.
+fn force_capture_bool_data<B: burn_backend::Backend>(
+    tensor: &burn_backend::tensor::BoolTensor<B>,
+    limit: Option<usize>,
+) -> Option<Vec<f64>> {
+    let device = B::bool_device(tensor);
+    let _ = B::sync(&device);
+    block_on_future(B::bool_into_data(tensor.clone()))
+        .ok()
+        .map(|data| extract_preview(&data, limit.unwrap_or(usize::MAX)))
+}
+
 // ---------------------------------------------------------------------------
 // Public marker/span API
 // ---------------------------------------------------------------------------
@@ -1303,7 +1339,7 @@ pub struct MarkerBuilder {
     name: String,
     debug_data: Option<String>,
     binary_data: Option<Vec<u8>>,
-    tensors: Vec<FusionOutputData>,
+    tensors: Vec<FusionTensorData>,
 }
 
 impl MarkerBuilder {
@@ -1331,7 +1367,7 @@ impl MarkerBuilder {
     /// Attach raw tensor data (shape + values) to this marker/span.
     /// Can be called multiple times to attach multiple tensors.
     pub fn tensor_raw(mut self, shape: Vec<usize>, data: Vec<f64>) -> Self {
-        self.tensors.push(FusionOutputData {
+        self.tensors.push(FusionTensorData {
             shape,
             dtype: String::new(),
             data,
@@ -1353,7 +1389,7 @@ impl MarkerBuilder {
         let data = maybe_capture_float_data::<B>(tensor);
         if let Some(vals) = data {
             let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
-            self.tensors.push(FusionOutputData { shape, dtype, data: vals, tensor_id: None });
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
         }
         self
     }
@@ -1371,7 +1407,7 @@ impl MarkerBuilder {
         let data = maybe_capture_int_data::<B>(tensor);
         if let Some(vals) = data {
             let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
-            self.tensors.push(FusionOutputData { shape, dtype, data: vals, tensor_id: None });
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
         }
         self
     }
@@ -1389,7 +1425,55 @@ impl MarkerBuilder {
         let data = maybe_capture_bool_data::<B>(tensor);
         if let Some(vals) = data {
             let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
-            self.tensors.push(FusionOutputData { shape, dtype, data: vals, tensor_id: None });
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
+        }
+        self
+    }
+
+    /// Attach a float tensor and **always** capture its data, regardless of
+    /// the `trace-data` feature flag. `capture_limit`: `Some(n)` captures at
+    /// most `n` values, `None` captures all. Can be called multiple times.
+    pub fn tensor_with_data<B: burn_backend::Backend>(
+        mut self,
+        tensor: &burn_backend::tensor::FloatTensor<B>,
+        capture_limit: Option<usize>,
+    ) -> Self {
+        let shape: Vec<usize> = burn_backend::TensorMetadata::shape(tensor).iter().copied().collect();
+        if let Some(vals) = force_capture_float_data::<B>(tensor, capture_limit) {
+            let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
+        }
+        self
+    }
+
+    /// Attach an int tensor and **always** capture its data, regardless of
+    /// the `trace-data` feature flag. `capture_limit`: `Some(n)` captures at
+    /// most `n` values, `None` captures all. Can be called multiple times.
+    pub fn tensor_int_with_data<B: burn_backend::Backend>(
+        mut self,
+        tensor: &burn_backend::tensor::IntTensor<B>,
+        capture_limit: Option<usize>,
+    ) -> Self {
+        let shape: Vec<usize> = burn_backend::TensorMetadata::shape(tensor).iter().copied().collect();
+        if let Some(vals) = force_capture_int_data::<B>(tensor, capture_limit) {
+            let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
+        }
+        self
+    }
+
+    /// Attach a bool tensor and **always** capture its data, regardless of
+    /// the `trace-data` feature flag. `capture_limit`: `Some(n)` captures at
+    /// most `n` values, `None` captures all. Can be called multiple times.
+    pub fn tensor_bool_with_data<B: burn_backend::Backend>(
+        mut self,
+        tensor: &burn_backend::tensor::BoolTensor<B>,
+        capture_limit: Option<usize>,
+    ) -> Self {
+        let shape: Vec<usize> = burn_backend::TensorMetadata::shape(tensor).iter().copied().collect();
+        if let Some(vals) = force_capture_bool_data::<B>(tensor, capture_limit) {
+            let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
         }
         self
     }
@@ -1425,14 +1509,14 @@ pub struct SpanGuard {
     caller: Option<String>,
     debug_data: Option<String>,
     binary_data: Option<Vec<u8>>,
-    tensors: Vec<FusionOutputData>,
+    tensors: Vec<FusionTensorData>,
 }
 
 impl SpanGuard {
     /// Attach raw tensor data after the span has started.
     /// Can be called multiple times to attach multiple tensors.
     pub fn add_tensor_raw(&mut self, shape: Vec<usize>, data: Vec<f64>) {
-        self.tensors.push(FusionOutputData {
+        self.tensors.push(FusionTensorData {
             shape,
             dtype: String::new(),
             data,
@@ -1450,7 +1534,7 @@ impl SpanGuard {
         let data = maybe_capture_float_data::<B>(tensor);
         if let Some(vals) = data {
             let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
-            self.tensors.push(FusionOutputData { shape, dtype, data: vals, tensor_id: None });
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
         }
     }
 
@@ -1464,7 +1548,7 @@ impl SpanGuard {
         let data = maybe_capture_int_data::<B>(tensor);
         if let Some(vals) = data {
             let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
-            self.tensors.push(FusionOutputData { shape, dtype, data: vals, tensor_id: None });
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
         }
     }
 
@@ -1478,7 +1562,52 @@ impl SpanGuard {
         let data = maybe_capture_bool_data::<B>(tensor);
         if let Some(vals) = data {
             let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
-            self.tensors.push(FusionOutputData { shape, dtype, data: vals, tensor_id: None });
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
+        }
+    }
+
+    /// Attach a float tensor after the span has started, **always** capturing
+    /// data regardless of the `trace-data` feature flag. `capture_limit`:
+    /// `Some(n)` captures at most `n` values, `None` captures all.
+    pub fn add_tensor_with_data<B: burn_backend::Backend>(
+        &mut self,
+        tensor: &burn_backend::tensor::FloatTensor<B>,
+        capture_limit: Option<usize>,
+    ) {
+        let shape: Vec<usize> = burn_backend::TensorMetadata::shape(tensor).iter().copied().collect();
+        if let Some(vals) = force_capture_float_data::<B>(tensor, capture_limit) {
+            let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
+        }
+    }
+
+    /// Attach an int tensor after the span has started, **always** capturing
+    /// data regardless of the `trace-data` feature flag. `capture_limit`:
+    /// `Some(n)` captures at most `n` values, `None` captures all.
+    pub fn add_tensor_int_with_data<B: burn_backend::Backend>(
+        &mut self,
+        tensor: &burn_backend::tensor::IntTensor<B>,
+        capture_limit: Option<usize>,
+    ) {
+        let shape: Vec<usize> = burn_backend::TensorMetadata::shape(tensor).iter().copied().collect();
+        if let Some(vals) = force_capture_int_data::<B>(tensor, capture_limit) {
+            let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
+        }
+    }
+
+    /// Attach a bool tensor after the span has started, **always** capturing
+    /// data regardless of the `trace-data` feature flag. `capture_limit`:
+    /// `Some(n)` captures at most `n` values, `None` captures all.
+    pub fn add_tensor_bool_with_data<B: burn_backend::Backend>(
+        &mut self,
+        tensor: &burn_backend::tensor::BoolTensor<B>,
+        capture_limit: Option<usize>,
+    ) {
+        let shape: Vec<usize> = burn_backend::TensorMetadata::shape(tensor).iter().copied().collect();
+        if let Some(vals) = force_capture_bool_data::<B>(tensor, capture_limit) {
+            let dtype = format!("{:?}", burn_backend::TensorMetadata::dtype(tensor));
+            self.tensors.push(FusionTensorData { shape, dtype, data: vals, tensor_id: None });
         }
     }
 
