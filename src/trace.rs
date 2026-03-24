@@ -1125,6 +1125,8 @@ fn is_internal_function(func: &str) -> bool {
         || name.starts_with("cubecl")  // cubecl, cubecl_runtime, cubecl_wgpu, …
         || name.starts_with("std::")
         || name.starts_with("core::")
+        || name.starts_with("futures::")
+        || name.starts_with("futures_lite::")
         || name.starts_with("alloc::")
         || name.starts_with("tokio::")
         || name.starts_with("wgpu")

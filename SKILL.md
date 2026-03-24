@@ -254,11 +254,11 @@ All public items are re-exported from the crate root: `use burn_tracing_backend:
 use burn_tracing_backend::Profiler;
 
 // Without fusion — traces individual ops
-type B = Profiler<CubeBackend<WgpuRuntime>>;
+type B = Profiler<CubeBackend<WgpuRuntime, f32, i32, u32>>;
 
 // With fusion — also captures fused kernel dispatch
 use burn_fusion::Fusion;
-type B = Fusion<Profiler<CubeBackend<WgpuRuntime>>>;
+type B = Fusion<Profiler<CubeBackend<WgpuRuntime, f32, i32, u32>>>;
 ```
 
 `Profiler` must be the **inner** layer when using `Fusion` — `Fusion<Profiler<B>>`, not `Profiler<Fusion<B>>`.

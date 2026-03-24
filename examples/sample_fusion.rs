@@ -16,7 +16,7 @@ use burn::prelude::*;
 use burn_fusion::Fusion;
 use burn_tracing_backend::{Profiler, finish_tracing, marker, start_tracing, write_trace};
 
-/// `Fusion<Profiler<CubeBackend<WgpuRuntime>>>` — the Profiler sits inside
+/// `Fusion<Profiler<CubeBackend<WgpuRuntime, f32, i32, u32>>>` — the Profiler sits inside
 /// the Fusion layer so that `ProfiledFusionRuntime` can intercept every
 /// optimization dispatch.
 type B = Fusion<Profiler<CubeBackend<WgpuRuntime, f32, i32, u32>>>;

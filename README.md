@@ -46,11 +46,12 @@ burn-tracing-backend = { git = "https://github.com/AdrianEddy/burn-tracing-backe
 ```rust
 use burn::backend::wgpu::{CubeBackend, WgpuRuntime};
 use burn::prelude::*;
+use burn::tensor::Distribution;
 use burn_fusion::Fusion;
 use burn_tracing_backend::{Profiler, start_tracing, finish_tracing, write_trace, marker};
 
 // Profiler sits inside the Fusion layer to intercept fusion dispatch
-type B = Fusion<Profiler<CubeBackend<WgpuRuntime>>>;
+type B = Fusion<Profiler<CubeBackend<WgpuRuntime, f32, i32, u32>>>;
 
 fn main() {
     let device = Default::default();
@@ -126,10 +127,11 @@ A self-contained example that exercises elementwise fusion, matmul fusion, reduc
 ```rust
 use burn::backend::wgpu::{CubeBackend, WgpuRuntime};
 use burn::prelude::*;
+use burn::tensor::Distribution;
 use burn_fusion::Fusion;
 use burn_tracing_backend::{Profiler, start_tracing, finish_tracing, write_trace, marker, OpCategory};
 
-type B = Fusion<Profiler<CubeBackend<WgpuRuntime>>>;
+type B = Fusion<Profiler<CubeBackend<WgpuRuntime, f32, i32, u32>>>;
 
 fn main() {
     let device = Default::default();
@@ -142,7 +144,7 @@ fn main() {
         let _span = marker("elementwise").debug("add → mul → exp chain").span();
         let a: Tensor<B, 2> = Tensor::random([4, 16], Distribution::Normal(0.0, 1.0), &device);
         let b: Tensor<B, 2> = Tensor::random([4, 16], Distribution::Normal(0.0, 1.0), &device);
-        let c = a.clone().add(b).mul(a).exp().log().abs();
+        let _c = a.clone().add(b).mul(a).exp().log().abs();
         B::sync(&device).unwrap(); // explicit sync
     }
 
@@ -152,7 +154,7 @@ fn main() {
         let x: Tensor<B, 2> = Tensor::random([4, 16], Distribution::Normal(0.0, 1.0), &device);
         let w: Tensor<B, 2> = Tensor::random([16, 8], Distribution::Normal(0.0, 0.1), &device);
         let bias: Tensor<B, 1> = Tensor::zeros([8], &device);
-        let out = x.matmul(w).add(bias.unsqueeze()).clamp_min(0.0);
+        let _out = x.matmul(w).add(bias.unsqueeze()).clamp_min(0.0);
         B::sync(&device).unwrap();
     }
 
