@@ -580,6 +580,12 @@ function formatBytes(b) {
 }
 
 function formatShape(s) { return '[' + s.join(', ') + ']'; }
+// Natural sort comparator for tensor IDs (string IDs with embedded numbers)
+function naturalCmpTensorId(a, b) {
+  var ai = a.tensor_id || '', bi = b.tensor_id || '';
+  return ai.localeCompare(bi, undefined, { numeric: true, sensitivity: 'base' });
+}
+function sortedByTensorId(arr) { return arr.slice().sort(naturalCmpTensorId); }
 
 function formatDataValue(v) {
   if (v === null || v === undefined) return 'NaN';
@@ -1114,7 +1120,7 @@ function selectEvent(idx, fromTable) {
       }
       // Show input shapes from captured handles if available, else from first fused op
       if (e.fusion_inputs && e.fusion_inputs.length > 0) {
-        for (const fi of e.fusion_inputs) {
+        for (const fi of sortedByTensorId(e.fusion_inputs)) {
           const isFb = fi.tensor_id && fallbackInputTids.has(fi.tensor_id);
           const dimStyle = isFb ? ' style="opacity:0.5"' : '';
           const dtypeLabel = fi.dtype ? ' <span style="opacity:0.5;font-size:11px">' + fi.dtype + '</span>' : '';
@@ -1132,7 +1138,7 @@ function selectEvent(idx, fromTable) {
       // from the last fused op (e.g. zero-copy reshape) not already shown.
       const shown = new Set();
       if (e.fusion_outputs && e.fusion_outputs.length > 0) {
-        for (const fo of e.fusion_outputs) {
+        for (const fo of sortedByTensorId(e.fusion_outputs)) {
           shown.add(JSON.stringify(fo.shape));
           const isFb = fo.tensor_id && fallbackOutputTids.has(fo.tensor_id);
           const dimStyle = isFb ? ' style="opacity:0.5"' : '';
@@ -1194,12 +1200,12 @@ function selectEvent(idx, fromTable) {
     }
   }
   if (e.fusion_inputs && e.fusion_inputs.length > 0) {
-    for (const fi of e.fusion_inputs) {
+    for (const fi of sortedByTensorId(e.fusion_inputs)) {
       inputSources.push({ vals: fi.data, shape: fi.shape, dtype: fi.dtype, isFallback: fi.tensor_id && fbInTids.has(fi.tensor_id) });
     }
   }
   if (e.fusion_outputs && e.fusion_outputs.length > 0) {
-    for (const fo of e.fusion_outputs) {
+    for (const fo of sortedByTensorId(e.fusion_outputs)) {
       outputSources.push({ vals: fo.data, shape: fo.shape, dtype: fo.dtype, isFallback: fo.tensor_id && fbOutTids.has(fo.tensor_id) });
     }
   } else if (e.data_preview && e.data_preview.length > 0) {
@@ -1443,10 +1449,10 @@ canvas.addEventListener('mousemove', (evt) => {
     }
     // Data preview (fusion inputs/outputs or legacy data_preview)
     const ttInputPreview = e.fusion_inputs && e.fusion_inputs.length > 0
-      ? e.fusion_inputs.map(fi => formatDataCompact(fi.data, 4)).join(' | ')
+      ? sortedByTensorId(e.fusion_inputs).map(fi => formatDataCompact(fi.data, 4)).join(' | ')
       : null;
     const ttOutputPreview = e.fusion_outputs && e.fusion_outputs.length > 0
-      ? e.fusion_outputs.map(fo => formatDataCompact(fo.data, 4)).join(' | ')
+      ? sortedByTensorId(e.fusion_outputs).map(fo => formatDataCompact(fo.data, 4)).join(' | ')
       : (e.data_preview && e.data_preview.length > 0 ? formatDataCompact(e.data_preview, 6) : null);
     const ttPreview = ttInputPreview && ttOutputPreview
       ? 'In: ' + ttInputPreview + ' \u2192 Out: ' + ttOutputPreview
@@ -1912,10 +1918,12 @@ function updateTableRows() {
       detail += (detail ? ' ' : '') + '<span style="color:#80cbc4;font-size:10px;font-family:monospace" title="' + e.caller.replace(/"/g, '&quot;') + '">' + shortCaller + '</span>';
     }
     // Data preview badge
-    const badgeInputPreview = e.fusion_inputs && e.fusion_inputs.length > 0
-      ? formatDataCompact(e.fusion_inputs[0].data, 4) : null;
-    const badgeOutputPreview = e.fusion_outputs && e.fusion_outputs.length > 0
-      ? formatDataCompact(e.fusion_outputs[0].data, 4)
+    const sortedFusionInputs = e.fusion_inputs && e.fusion_inputs.length > 0 ? sortedByTensorId(e.fusion_inputs) : null;
+    const sortedFusionOutputs = e.fusion_outputs && e.fusion_outputs.length > 0 ? sortedByTensorId(e.fusion_outputs) : null;
+    const badgeInputPreview = sortedFusionInputs
+      ? formatDataCompact(sortedFusionInputs[0].data, 4) : null;
+    const badgeOutputPreview = sortedFusionOutputs
+      ? formatDataCompact(sortedFusionOutputs[0].data, 4)
       : (e.data_preview && e.data_preview.length > 0 ? formatDataCompact(e.data_preview, 4) : null);
     if (badgeInputPreview) {
       detail += (detail ? ' ' : '') + '<span style="color:#90caf9;font-size:10px;font-family:monospace">' + badgeInputPreview + '</span>';
